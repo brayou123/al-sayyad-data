@@ -4,102 +4,126 @@ import json
 import numpy as np
 import xarray as xr
 from datetime import datetime, timedelta
-from copernicusmarine import read_dataframe, subset
+from copernicusmarine import subset
 
 # =====================================================
-# 1. تحديد المنطقة (البحر المتوسط كاملاً)
+# 1. المصادقة (من GitHub Secrets)
+# =====================================================
+USERNAME = os.environ.get("COPERNICUS_USERNAME")
+PASSWORD = os.environ.get("COPERNICUS_PASSWORD")
+if not USERNAME or not PASSWORD:
+    raise ValueError("Missing Copernicus credentials in environment")
+
+# =====================================================
+# 2. المنطقة والوقت
 # =====================================================
 LAT_MIN, LAT_MAX = 30.0, 46.0
 LON_MIN, LON_MAX = -6.0, 36.0
-DEPTHS = [0, 10, 20, 30, 50, 75, 100]  # لحساب الـ thermocline
+DEPTHS = [0, 10, 20, 30, 50, 75, 100]   # لحساب التارموكلاين
 
-# تاريخ اليوم – نأخذ أحدث تحليل متاح (أمس)
 today = datetime.utcnow().date()
 yesterday = today - timedelta(days=1)
+start_date = yesterday.isoformat()
+end_date = yesterday.isoformat()
+
+print(f"Fetching data for {yesterday}")
 
 # =====================================================
-# 2. جلب البيانات من Copernicus (فيزياء + BGC)
+# 3. جلب البيانات الفيزيائية (حرارة سطحية، ملوحة، تيارات)
 # =====================================================
-
-# --- البيانات الفيزيائية: درجة حرارة سطحية، ملوحة، تيارات سطحية ---
-phy_subset = subset(
+phy_result = subset(
     dataset_id="cmems_mod_med_phy_anfc_4.2km_P1D-m",
     variables=["thetao", "so", "uo", "vo"],
     minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
     minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
-    start_datetime=yesterday.isoformat(),
-    end_datetime=yesterday.isoformat(),
-    minimum_depth=0, maximum_depth=0,  # سطح فقط
+    start_datetime=start_date, end_datetime=end_date,
+    minimum_depth=0, maximum_depth=0,
+    username=USERNAME, password=PASSWORD
 )
-ds_phy = xr.open_dataset(phy_subset)
+# subset يعيد مساراً إلى مجلد Zarr أو ملف NetCDF
+# نتحقق من نوع المسار
+if os.path.isdir(phy_result):
+    ds_phy = xr.open_dataset(phy_result, engine='zarr')
+else:
+    ds_phy = xr.open_dataset(phy_result, engine='netcdf4')
 
-# --- البيانات البيوجيوكيميائية: كلوروفيل، أكسجين، شفافية ---
-bgc_subset = subset(
+# =====================================================
+# 4. جلب البيانات البيوجيوكيميائية (كلوروفيل، أكسجين، شفافية)
+# =====================================================
+bgc_result = subset(
     dataset_id="cmems_mod_med_bgc_anfc_4.2km_P1D-m",
     variables=["chl", "o2", "kd490"],
     minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
     minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
-    start_datetime=yesterday.isoformat(),
-    end_datetime=yesterday.isoformat(),
+    start_datetime=start_date, end_datetime=end_date,
     minimum_depth=0, maximum_depth=0,
+    username=USERNAME, password=PASSWORD
 )
-ds_bgc = xr.open_dataset(bgc_subset)
+if os.path.isdir(bgc_result):
+    ds_bgc = xr.open_dataset(bgc_result, engine='zarr')
+else:
+    ds_bgc = xr.open_dataset(bgc_result, engine='netcdf4')
 
-# --- بيانات درجة الحرارة على أعماق متعددة لحساب التارموكلاين ---
-temp_profiles = subset(
+# =====================================================
+# 5. جلب بيانات درجة الحرارة على أعماق متعددة
+# =====================================================
+temp_prof_result = subset(
     dataset_id="cmems_mod_med_phy_anfc_4.2km_P1D-m",
     variables=["thetao"],
     minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
     minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
-    start_datetime=yesterday.isoformat(),
-    end_datetime=yesterday.isoformat(),
+    start_datetime=start_date, end_datetime=end_date,
     minimum_depth=min(DEPTHS), maximum_depth=max(DEPTHS),
+    username=USERNAME, password=PASSWORD
 )
-ds_temp = xr.open_dataset(temp_profiles)
+if os.path.isdir(temp_prof_result):
+    ds_temp = xr.open_dataset(temp_prof_result, engine='zarr')
+else:
+    ds_temp = xr.open_dataset(temp_prof_result, engine='netcdf4')
 
 # =====================================================
-# 3. دمج البيانات وإنشاء الشبكة
+# 6. استخراج الإحداثيات
 # =====================================================
-
-# استخرج الإحداثيات
 lons = ds_phy.longitude.values
 lats = ds_phy.latitude.values
-time = ds_phy.time.values[0]
 
 points = []
 for i, lat in enumerate(lats):
     for j, lon in enumerate(lons):
-        # تجاهل النقاط البرية (أو استخدم mask من البيانات)
-        if np.isnan(ds_phy.thetao.isel(time=0, latitude=i, longitude=j).values):
+        # تخطي النقاط البرية (حيث thetao = NaN)
+        temp_surf = ds_phy.thetao.isel(time=0, latitude=i, longitude=j).values
+        if np.isnan(temp_surf):
             continue
 
-        # استخرج القيم السطحية
-        temp_surf = float(ds_phy.thetao.isel(time=0, latitude=i, longitude=j).values)
+        # القيم السطحية
+        temp_surf = float(temp_surf)
         sal_surf = float(ds_phy.so.isel(time=0, latitude=i, longitude=j).values)
         u_surf = float(ds_phy.uo.isel(time=0, latitude=i, longitude=j).values)
         v_surf = float(ds_phy.vo.isel(time=0, latitude=i, longitude=j).values)
         current_speed = np.sqrt(u_surf**2 + v_surf**2)
 
         # BGC
-        chl = float(ds_bgc.chl.isel(time=0, latitude=i, longitude=j).values) if 'chl' in ds_bgc else np.nan
-        o2 = float(ds_bgc.o2.isel(time=0, latitude=i, longitude=j).values) if 'o2' in ds_bgc else np.nan
-        kd490 = float(ds_bgc.kd490.isel(time=0, latitude=i, longitude=j).values) if 'kd490' in ds_bgc else np.nan
+        chl = ds_bgc.chl.isel(time=0, latitude=i, longitude=j).values
+        chl = float(chl) if not np.isnan(chl) else np.nan
+        o2 = ds_bgc.o2.isel(time=0, latitude=i, longitude=j).values
+        o2 = float(o2) if not np.isnan(o2) else np.nan
+        kd490 = ds_bgc.kd490.isel(time=0, latitude=i, longitude=j).values
+        kd490 = float(kd490) if not np.isnan(kd490) else np.nan
 
-        # حساب التارموكلاين (عمق أقصى تدرج حراري)
-        # نجلب ملف درجة الحرارة على الأعماق المختلفة لهذه النقطة
+        # حساب التارموكلاين
+        # نجلب ملف تعريف درجة الحرارة لهذه النقطة
         temp_profile = []
         for d in DEPTHS:
-            # أعمق مستوى متاح
             depth_idx = np.argmin(np.abs(ds_temp.depth.values - d))
-            t = float(ds_temp.thetao.isel(time=0, latitude=i, longitude=j, depth=depth_idx).values)
+            t = ds_temp.thetao.isel(time=0, latitude=i, longitude=j, depth=depth_idx).values
+            t = float(t) if not np.isnan(t) else np.nan
             temp_profile.append(t)
-
-        # احسب التدرج بين المستويات المتجاورة
+        # احسب التدرج الأقصى
         max_grad = 0
-        thermocline_depth = 35  # افتراضي
+        thermocline_depth = 35.0  # افتراضي
         for k in range(1, len(DEPTHS)):
             grad = abs(temp_profile[k] - temp_profile[k-1])
-            if grad > max_grad:
+            if grad > max_grad and not (np.isnan(temp_profile[k]) or np.isnan(temp_profile[k-1])):
                 max_grad = grad
                 thermocline_depth = (DEPTHS[k] + DEPTHS[k-1]) / 2
 
@@ -115,8 +139,10 @@ for i, lat in enumerate(lats):
             "thermocline": round(thermocline_depth, 1)
         })
 
+print(f"Processed {len(points)} ocean points")
+
 # =====================================================
-# 4. حفظ النتائج كـ data.json (مضغوط)
+# 7. حفظ النتائج كـ data.json
 # =====================================================
 output = {
     "timestamp": yesterday.isoformat(),
@@ -126,3 +152,5 @@ output = {
 
 with open("data.json", "w", encoding="utf-8") as f:
     json.dump(output, f, separators=(',', ':'), ensure_ascii=False)
+
+print("data.json saved successfully")
