@@ -7,10 +7,10 @@ from datetime import datetime, timedelta
 from copernicusmarine import subset
 
 # =====================================================
-# المصادقة – استخدام الأسماء التي لديك في GitHub Secrets
+# المصادقة – باستخدام المتغيرات التي تمررها GitHub Actions
 # =====================================================
-USERNAME = os.environ.get("COPERNICUS_USER")
-PASSWORD = os.environ.get("COPERNICUS_PASS")
+USERNAME = os.environ.get("COPERNICUSMARINE_USERNAME")
+PASSWORD = os.environ.get("COPERNICUSMARINE_PASSWORD")
 if not USERNAME or not PASSWORD:
     raise ValueError("Missing Copernicus credentials")
 
@@ -46,15 +46,12 @@ def download_and_open(dataset_id, variables, filename, depth_min=DEPTH_SURFACE, 
         username=USERNAME, password=PASSWORD,
         output_filename=filename
     )
-    # التحقق من وجود الملف
     if not os.path.exists(path):
         raise RuntimeError(f"File {path} not created")
     file_size = os.path.getsize(path)
     if file_size == 0:
         raise RuntimeError(f"File {path} is empty (size 0)")
     print(f"  Downloaded {path} ({file_size} bytes)")
-
-    # فتح الملف مع تحديد المحرك
     return xr.open_dataset(path, engine='netcdf4')
 
 # =====================================================
