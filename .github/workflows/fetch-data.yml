@@ -2,77 +2,27 @@ name: Fetch Copernicus Data
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # كل يوم الساعة 6 صباحاً
-  workflow_dispatch:  # تشغيل يدوي
+    - cron: '0 5 * * *'   # كل يوم الساعة 5 صباحاً
+  workflow_dispatch:       # تشغيل يدوي
 
 jobs:
-  fetch:
+  update-data:
     runs-on: ubuntu-latest
     steps:
-      - name: Install copernicusmarine
-        run: pip install copernicusmarine h5py
-
-      - name: Fetch and upload data
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install copernicusmarine xarray netCDF4 numpy
+      - name: Fetch and process data
+        run: python fetch_copernicus.py
         env:
-          COPERNICUS_USER: ${{ secrets.COPERNICUS_USER }}
-          COPERNICUS_PASS: ${{ secrets.COPERNICUS_PASS }}
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          CF_KV_NAMESPACE_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
-          CF_ACCOUNT_ID: 68426151507dab80a4642542ed6975ac
+          COPERNICUS_USERNAME: ${{ secrets.COPERNICUS_USERNAME }}
+          COPERNICUS_PASSWORD: ${{ secrets.COPERNICUS_PASSWORD }}
+      - name: Commit and push data.json
         run: |
-          python - <<'EOF'
-          import copernicusmarine
-          import json
-          import os
-          import requests
-          import numpy as np
-
-          user = os.environ['COPERNICUS_USER']
-          passwd = os.environ['COPERNICUS_PASS']
-          token = os.environ['CF_API_TOKEN']
-          kv_id = os.environ['CF_KV_NAMESPACE_ID']
-          account_id = os.environ['CF_ACCOUNT_ID']
-
-          datasets = {
-            'temperature':  ('cmems_mod_med_phy-tem_anfc_4.2km_P1D-m', 'thetao'),
-            'salinity':     ('cmems_mod_med_phy-sal_anfc_4.2km_P1D-m', 'so'),
-            'chlorophyll':  ('cmems_mod_med_bgc-bio_anfc_4.2km_P1D-m', 'chl'),
-            'oxygen':       ('cmems_mod_med_bgc-bio_anfc_4.2km_P1D-m', 'o2'),
-            'current_u':    ('cmems_mod_med_phy-cur_anfc_4.2km_P1D-m', 'uo'),
-            'current_v':    ('cmems_mod_med_phy-cur_anfc_4.2km_P1D-m', 'vo'),
-            'transparency': ('cmems_mod_med_bgc-optics_anfc_4.2km_P1D-m', 'Kd490'),
-          }
-
-          result = {}
-
-          for key, (dataset_id, variable) in datasets.items():
-            try:
-              ds = copernicusmarine.open_dataset(
-                dataset_id=dataset_id,
-                username=user,
-                password=passwd,
-                minimum_longitude=-6,
-                maximum_longitude=37,
-                minimum_latitude=30,
-                maximum_latitude=46,
-                minimum_depth=1,
-                maximum_depth=2,
-              )
-              vals = ds[variable].isel(time=-1, depth=0).values
-              lats = ds.latitude.values.tolist()
-              lons = ds.longitude.values.tolist()
-              result[key] = {
-                'lats': lats,
-                'lons': lons,
-                'values': np.where(np.isnan(vals), None, np.round(vals.astype(float), 3)).tolist()
-              }
-              print(f'{key} done')
-            except Exception as e:
-              print(f'{key} failed: {e}')
-
-          # Upload to Cloudflare KV
-          url = f'https://api.cloudflare.com/client/v4/accounts/{account_id}/storage/kv/namespaces/{kv_id}/values/marine_data'
-          headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
-          r = requests.put(url, headers=headers, data=json.dumps(result))
-          print('KV upload:', r.status_code, r.text[:200])
-          EOF
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add data.json
+          git commit -m "Update ocean data $(date +'%Y-%m-%d')" || exit 0
+          git push
