@@ -2,8 +2,8 @@ name: Fetch Copernicus Data
 
 on:
   schedule:
-    - cron: '0 5 * * *'   # كل يوم الساعة 5 صباحاً
-  workflow_dispatch:       # تشغيل يدوي
+    - cron: '0 5 * * *'
+  workflow_dispatch:
 
 jobs:
   update-data:
@@ -17,8 +17,8 @@ jobs:
       - name: Fetch and process data
         run: python fetch_copernicus.py
         env:
-          COPERNICUS_USERNAME: ${{ secrets.COPERNICUS_USERNAME }}
-          COPERNICUS_PASSWORD: ${{ secrets.COPERNICUS_PASSWORD }}
+          COPERNICUS_USER: ${{ secrets.COPERNICUS_USER }}
+          COPERNICUS_PASS: ${{ secrets.COPERNICUS_PASS }}
       - name: Commit and push data.json
         run: |
           git config user.name "GitHub Actions"
