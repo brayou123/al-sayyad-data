@@ -15,14 +15,14 @@ if not USERNAME or not PASSWORD:
     raise ValueError("Missing Copernicus credentials")
 
 # =====================================================
-# الإحداثيات الثابتة
+# الإحداثيات الصحيحة (من رسائل التحذير)
 # =====================================================
 LAT_MIN = 30.1875
 LAT_MAX = 45.97916793823242
-LON_MIN = -6.0
-LON_MAX = 36.0
+LON_MIN = -5.541666507720947   # من التحذير
+LON_MAX = 36.29166793823242    # من التحذير
 DEPTH_SURFACE = 1.0182366371154785
-DEPTH_MIN_PROFILE = 0.0
+DEPTH_MIN_PROFILE = DEPTH_SURFACE   # بدلاً من 0
 DEPTH_MAX_PROFILE = 100.0
 
 # =====================================================
@@ -32,22 +32,19 @@ yesterday = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
 print(f"Fetching data for {yesterday}")
 
 # =====================================================
-# دالة مساعدة لاستخراج المسار من نتيجة subset
+# دالة مساعدة لاستخراج المسار
 # =====================================================
 def get_path_from_result(result):
-    """Extract file path from subset result (could be string or ResponseSubset)."""
     if isinstance(result, str):
         return result
     if hasattr(result, 'filenames') and result.filenames:
         return result.filenames[0]
     if hasattr(result, 'filename'):
         return result.filename
-    # Fallback: if it's a ResponseSubset but no filenames, maybe it's the path?
-    # But we'll raise an error.
     raise TypeError(f"Cannot extract path from {type(result)}: {result}")
 
 # =====================================================
-# دالة مساعدة للتحميل والفتح
+# دالة للتحميل والفتح
 # =====================================================
 def download_and_open(dataset_id, variables, filename, depth_min=DEPTH_SURFACE, depth_max=DEPTH_SURFACE):
     print(f"Downloading {variables} from {dataset_id}...")
@@ -95,7 +92,7 @@ ds_kd = download_and_open(
 # =====================================================
 # تحميل ملف تعريف درجة الحرارة
 # =====================================================
-print("Downloading temperature profile (0–100 m)...")
+print("Downloading temperature profile (surface to 100m)...")
 profile_result = subset(
     dataset_id="cmems_mod_med_phy-tem_anfc_4.2km_P1D-m",
     variables=["thetao"],
@@ -116,28 +113,31 @@ ds_prof = xr.open_dataset(profile_path, engine='netcdf4')
 # دمج البيانات السطحية
 # =====================================================
 print("Merging surface datasets...")
-ds_surf = xr.merge([
-    ds_temp.squeeze(),
-    ds_sal.squeeze(),
-    ds_cur.squeeze(),
-    ds_chl.squeeze(),
-    ds_o2.squeeze(),
-    ds_kd.squeeze()
-])
+ds_surf = xr.merge(
+    [ds_temp.squeeze(), ds_sal.squeeze(), ds_cur.squeeze(),
+     ds_chl.squeeze(), ds_o2.squeeze(), ds_kd.squeeze()],
+    join='exact', compat='override'  # لتجنب التحذيرات
+)
 
 # =====================================================
-# حساب التارموكلاين
+# حساب التارموكلاين (باستخدام sel بدلاً من isel)
 # =====================================================
 print("Computing thermocline...")
-lons = ds_surf.longitude.values
 lats = ds_surf.latitude.values
+lons = ds_surf.longitude.values
 depth_vals = ds_prof.depth.values
 
 thermocline_map = np.full((len(lats), len(lons)), np.nan)
 
 for i, lat in enumerate(lats):
     for j, lon in enumerate(lons):
-        temp_profile = ds_prof.thetao.isel(time=0, latitude=i, longitude=j).values
+        # استخراج ملف درجة الحرارة على الأعماق لأقرب نقطة
+        # نستخدم sel مع أقرب خلية (method='nearest')
+        point_profile = ds_prof.sel(
+            latitude=lat, longitude=lon, method='nearest'
+        )
+        temp_profile = point_profile.thetao.isel(time=0).values
+        # ازالة القيم المفقودة
         depths_clean = []
         temps_clean = []
         for d_idx, t in enumerate(temp_profile):
