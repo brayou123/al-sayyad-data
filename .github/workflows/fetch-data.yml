@@ -14,11 +14,21 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install copernicusmarine xarray netCDF4 numpy
+      
+      # خطوة لاستكشاف مجموعات البيانات المتاحة
+      - name: Find available datasets
+        run: python find_datasets.py
+        env:
+          COPERNICUS_USER: ${{ secrets.COPERNICUS_USER }}
+          COPERNICUS_PASS: ${{ secrets.COPERNICUS_PASS }}
+      
+      # الخطوة الرئيسية لجلب البيانات وتحويلها
       - name: Fetch and process data
         run: python fetch_copernicus.py
         env:
           COPERNICUS_USER: ${{ secrets.COPERNICUS_USER }}
           COPERNICUS_PASS: ${{ secrets.COPERNICUS_PASS }}
+      
       - name: Commit and push data.json
         run: |
           git config user.name "GitHub Actions"
