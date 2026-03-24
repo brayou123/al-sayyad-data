@@ -8,7 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=IBM+Plex+Mono:wght@400;500&family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
-  /* جميع الـ CSS كما هو – لم يتغير */
+  /* ... (نفس الـ CSS السابق، لم يتغير) ... */
   :root {
     --bg: #060d14;
     --surface: #0b1623;
@@ -400,14 +400,42 @@ function hexA(hex, alpha) {
 }
 
 // ══════════════════════════════════════════════════════
-//  DATA LOADING (from data.json)
+//  DATA LOADING (columnar JSON → points array)
 // ══════════════════════════════════════════════════════
 async function loadOceanData() {
   try {
     const response = await fetch('data.json');
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const json = await response.json();
-    oceanData = json;
+    
+    // Convert columnar format to array of point objects
+    const latArr = json.lat;
+    const lonArr = json.lon;
+    const tempArr = json.temperature;
+    const salArr = json.salinity;
+    const chlArr = json.chlorophyll;
+    const o2Arr = json.oxygen;
+    const transArr = json.transparency;
+    const currArr = json.currentSpeed;
+    const thermoArr = json.thermocline;
+    
+    const n = latArr.length;
+    const points = [];
+    for (let i = 0; i < n; i++) {
+      points.push({
+        lat: latArr[i],
+        lon: lonArr[i],
+        temperature: tempArr[i],
+        salinity: salArr[i],
+        chlorophyll: chlArr[i],
+        oxygen: o2Arr[i],
+        transparency: transArr[i],
+        currentSpeed: currArr[i],
+        thermocline: thermoArr[i]
+      });
+    }
+    
+    oceanData = { timestamp: json.timestamp, resolution_km: json.resolution_km, points: points };
     console.log(`Loaded ${oceanData.points.length} points from ${oceanData.timestamp}`);
     if (userLat) document.getElementById('search-btn').disabled = false;
   } catch (err) {
