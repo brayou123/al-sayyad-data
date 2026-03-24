@@ -6,17 +6,7 @@ import xarray as xr
 from datetime import datetime, timedelta
 from copernicusmarine import subset
 
-# =====================================================
-# 1. المصادقة
-# =====================================================
-USERNAME = os.environ.get("COPERNICUS_USER")
-PASSWORD = os.environ.get("COPERNICUS_PASS")
-if not USERNAME or not PASSWORD:
-    raise ValueError("Missing Copernicus credentials in environment")
-
-# =====================================================
-# 2. المنطقة والوقت
-# =====================================================
+# المتغيرات البيئية ستُقرأ تلقائياً
 LAT_MIN, LAT_MAX = 30.0, 46.0
 LON_MIN, LON_MAX = -6.0, 36.0
 DEPTHS = [0, 10, 20, 30, 50, 75, 100]
@@ -28,63 +18,48 @@ end_date = yesterday.isoformat()
 
 print(f"Fetching data for {yesterday}")
 
-# =====================================================
-# 3. البيانات الفيزيائية (حرارة، ملوحة، تيارات)
-# =====================================================
+# الفيزياء
 phy_result = subset(
-    dataset_id="MEDSEA_ANALYSISFORECAST_PHY_006_013",
+    dataset_id="cmems_mod_med_phy-tem_anfc_4.2km_P1D-m",
     variables=["thetao", "so", "uo", "vo"],
     minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
     minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
     start_datetime=start_date, end_datetime=end_date,
     minimum_depth=0, maximum_depth=0,
-    username=USERNAME, password=PASSWORD
 )
-
 if os.path.isdir(phy_result):
     ds_phy = xr.open_dataset(phy_result, engine='zarr')
 else:
     ds_phy = xr.open_dataset(phy_result, engine='netcdf4')
 
-# =====================================================
-# 4. البيانات البيوجيوكيميائية (كلوروفيل، أكسجين، شفافية)
-# =====================================================
+# البيوجيوكيمياء
 bgc_result = subset(
-    dataset_id="MEDSEA_ANALYSISFORECAST_BGC_006_014",
+    dataset_id="cmems_mod_med_bgc_anfc_4.2km_P1D-m",
     variables=["chl", "o2", "kd490"],
     minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
     minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
     start_datetime=start_date, end_datetime=end_date,
     minimum_depth=0, maximum_depth=0,
-    username=USERNAME, password=PASSWORD
 )
-
 if os.path.isdir(bgc_result):
     ds_bgc = xr.open_dataset(bgc_result, engine='zarr')
 else:
     ds_bgc = xr.open_dataset(bgc_result, engine='netcdf4')
 
-# =====================================================
-# 5. بيانات درجة الحرارة على أعماق متعددة (للتارموكلاين)
-# =====================================================
+# درجة الحرارة على الأعماق (للتارموكلاين)
 temp_prof_result = subset(
-    dataset_id="MEDSEA_ANALYSISFORECAST_PHY_006_013",
+    dataset_id="cmems_mod_med_phy-tem_anfc_4.2km_P1D-m",
     variables=["thetao"],
     minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
     minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
     start_datetime=start_date, end_datetime=end_date,
     minimum_depth=min(DEPTHS), maximum_depth=max(DEPTHS),
-    username=USERNAME, password=PASSWORD
 )
-
 if os.path.isdir(temp_prof_result):
     ds_temp = xr.open_dataset(temp_prof_result, engine='zarr')
 else:
     ds_temp = xr.open_dataset(temp_prof_result, engine='netcdf4')
 
-# =====================================================
-# 6. استخراج الإحداثيات
-# =====================================================
 lons = ds_phy.longitude.values
 lats = ds_phy.latitude.values
 
@@ -138,9 +113,6 @@ for i, lat in enumerate(lats):
 
 print(f"Processed {len(points)} ocean points")
 
-# =====================================================
-# 7. حفظ النتائج
-# =====================================================
 output = {
     "timestamp": yesterday.isoformat(),
     "resolution_km": 4.2,
