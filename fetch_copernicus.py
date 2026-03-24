@@ -6,24 +6,20 @@ import xarray as xr
 from datetime import datetime, timedelta
 from copernicusmarine import subset
 
-# =====================================================
-# 1. بيانات الدخول
-# =====================================================
+# ------------------------------
+# 1. التحقق من بيانات الدخول
+# ------------------------------
 USERNAME = os.environ.get("COPERNICUSMARINE_USERNAME")
 PASSWORD = os.environ.get("COPERNICUSMARINE_PASSWORD")
 if not USERNAME or not PASSWORD:
     raise ValueError("Missing Copernicus credentials in environment")
 
-# إحداثيات البيانات الفعلية
-LAT_MIN, LAT_MAX = 30.1875, 45.979
-LON_MIN, LON_MAX = -6.0, 36.0
-
-# العمق الأدنى المتاح في البيانات هو 1.018 متر، نضع 1.02 ليكون ضمن النطاق
-MIN_DEPTH = 1.02
-MAX_DEPTH = 100.0
-
-# الأعماق التي سنحسب عندها التارموكلاين (نقربها لأقرب عمق متاح لاحقاً)
-DEPTHS = [MIN_DEPTH, 10, 20, 30, 50, 75, MAX_DEPTH]
+# ------------------------------
+# 2. الإحداثيات والوقت
+# ------------------------------
+LAT_MIN, LAT_MAX = 30.1875, 45.979      # حدود خطوط العرض الحقيقية
+LON_MIN, LON_MAX = -6.0, 36.0           # الحدود الغربية والشرقية
+DEPTH_SURFACE = 1.02                    # أقرب عمق للسطح (متوفر في البيانات)
 
 today = datetime.utcnow().date()
 yesterday = today - timedelta(days=1)
@@ -32,181 +28,172 @@ end_date = yesterday.isoformat()
 
 print(f"Fetching data for {yesterday}")
 
-# =====================================================
-# 2. جلب درجة حرارة السطح (أقرب عمق = MIN_DEPTH)
-# =====================================================
-temp_surf_path = subset(
+# ------------------------------
+# 3. دالة مساعدة لتحميل الملف
+# ------------------------------
+def get_file_path(result):
+    """استخراج مسار الملف من نتيجة subset (حسب الإصدار)."""
+    if hasattr(result, 'filenames') and result.filenames:
+        return result.filenames[0]
+    if isinstance(result, str):
+        return result
+    raise TypeError(f"Cannot extract path from {type(result)}")
+
+# ------------------------------
+# 4. تحميل البيانات الفيزيائية (حرارة، ملوحة، تيارات)
+# ------------------------------
+print("Downloading physical data (temperature, salinity, currents)...")
+phy_res = subset(
     dataset_id="cmems_mod_med_phy-tem_anfc_4.2km_P1D-m",
-    variables=["thetao"],
+    variables=["thetao", "so", "uo", "vo"],
     minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
     minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
     start_datetime=start_date, end_datetime=end_date,
-    minimum_depth=MIN_DEPTH, maximum_depth=MIN_DEPTH,
-    username=USERNAME, password=PASSWORD
+    minimum_depth=DEPTH_SURFACE, maximum_depth=DEPTH_SURFACE,
+    username=USERNAME, password=PASSWORD,
+    dry_run=False
 )
-if temp_surf_path is None:
-    raise RuntimeError("subset returned None for temperature")
-if os.path.isdir(temp_surf_path):
-    ds_temp_surf = xr.open_dataset(temp_surf_path, engine='zarr')
-else:
-    ds_temp_surf = xr.open_dataset(temp_surf_path, engine='netcdf4')
+phy_path = get_file_path(phy_res)
+ds_phy = xr.open_dataset(phy_path)
 
-# =====================================================
-# 3. جلب الملوحة (أقرب عمق = MIN_DEPTH)
-# =====================================================
-salinity_path = subset(
-    dataset_id="cmems_mod_med_phy-sal_anfc_4.2km_P1D-m",
-    variables=["so"],
-    minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
-    minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
-    start_datetime=start_date, end_datetime=end_date,
-    minimum_depth=MIN_DEPTH, maximum_depth=MIN_DEPTH,
-    username=USERNAME, password=PASSWORD
-)
-if salinity_path is None:
-    raise RuntimeError("subset returned None for salinity")
-if os.path.isdir(salinity_path):
-    ds_sal = xr.open_dataset(salinity_path, engine='zarr')
-else:
-    ds_sal = xr.open_dataset(salinity_path, engine='netcdf4')
-
-# =====================================================
-# 4. جلب التيارات (أقرب عمق = MIN_DEPTH)
-# =====================================================
-current_path = subset(
-    dataset_id="cmems_mod_med_phy-cur_anfc_4.2km_P1D-m",
-    variables=["uo", "vo"],
-    minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
-    minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
-    start_datetime=start_date, end_datetime=end_date,
-    minimum_depth=MIN_DEPTH, maximum_depth=MIN_DEPTH,
-    username=USERNAME, password=PASSWORD
-)
-if current_path is None:
-    raise RuntimeError("subset returned None for currents")
-if os.path.isdir(current_path):
-    ds_cur = xr.open_dataset(current_path, engine='zarr')
-else:
-    ds_cur = xr.open_dataset(current_path, engine='netcdf4')
-
-# =====================================================
-# 5. جلب الكلوروفيل والأكسجين (أقرب عمق = MIN_DEPTH)
-# =====================================================
-bgc_bio_path = subset(
+# ------------------------------
+# 5. تحميل البيانات البيوجيوكيميائية (كلوروفيل، أكسجين)
+# ------------------------------
+print("Downloading biogeochemical data (chlorophyll, oxygen)...")
+bgc_res = subset(
     dataset_id="cmems_mod_med_bgc-bio_anfc_4.2km_P1D-m",
     variables=["chl", "o2"],
     minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
     minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
     start_datetime=start_date, end_datetime=end_date,
-    minimum_depth=MIN_DEPTH, maximum_depth=MIN_DEPTH,
-    username=USERNAME, password=PASSWORD
+    minimum_depth=DEPTH_SURFACE, maximum_depth=DEPTH_SURFACE,
+    username=USERNAME, password=PASSWORD,
+    dry_run=False
 )
-if bgc_bio_path is None:
-    raise RuntimeError("subset returned None for bgc-bio")
-if os.path.isdir(bgc_bio_path):
-    ds_bio = xr.open_dataset(bgc_bio_path, engine='zarr')
-else:
-    ds_bio = xr.open_dataset(bgc_bio_path, engine='netcdf4')
+bgc_path = get_file_path(bgc_res)
+ds_bgc = xr.open_dataset(bgc_path)
 
-# =====================================================
-# 6. جلب الشفافية (kd490) (أقرب عمق = MIN_DEPTH)
-# =====================================================
-optics_path = subset(
+# ------------------------------
+# 6. تحميل بيانات الشفافية (kd490)
+# ------------------------------
+print("Downloading optics data (transparency kd490)...")
+opt_res = subset(
     dataset_id="cmems_mod_med_bgc-optics_anfc_4.2km_P1D-m",
     variables=["kd490"],
     minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
     minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
     start_datetime=start_date, end_datetime=end_date,
-    minimum_depth=MIN_DEPTH, maximum_depth=MIN_DEPTH,
-    username=USERNAME, password=PASSWORD
+    minimum_depth=DEPTH_SURFACE, maximum_depth=DEPTH_SURFACE,
+    username=USERNAME, password=PASSWORD,
+    dry_run=False
 )
-if optics_path is None:
-    raise RuntimeError("subset returned None for optics")
-if os.path.isdir(optics_path):
-    ds_opt = xr.open_dataset(optics_path, engine='zarr')
-else:
-    ds_opt = xr.open_dataset(optics_path, engine='netcdf4')
+opt_path = get_file_path(opt_res)
+ds_opt = xr.open_dataset(opt_path)
 
-# =====================================================
-# 7. جلب درجة الحرارة على الأعماق (للتارموكلاين)
-# =====================================================
-temp_profile_path = subset(
+# ------------------------------
+# 7. تحميل بيانات درجة الحرارة على أعماق متعددة (للتارموكلاين)
+# ------------------------------
+print("Downloading temperature profile (for thermocline)...")
+prof_res = subset(
     dataset_id="cmems_mod_med_phy-tem_anfc_4.2km_P1D-m",
     variables=["thetao"],
     minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
     minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
     start_datetime=start_date, end_datetime=end_date,
-    minimum_depth=MIN_DEPTH, maximum_depth=MAX_DEPTH,
-    username=USERNAME, password=PASSWORD
+    minimum_depth=1.02, maximum_depth=100.0,   # نطاق الأعماق
+    username=USERNAME, password=PASSWORD,
+    dry_run=False
 )
-if temp_profile_path is None:
-    raise RuntimeError("subset returned None for temperature profile")
-if os.path.isdir(temp_profile_path):
-    ds_temp_prof = xr.open_dataset(temp_profile_path, engine='zarr')
-else:
-    ds_temp_prof = xr.open_dataset(temp_profile_path, engine='netcdf4')
+prof_path = get_file_path(prof_res)
+ds_prof = xr.open_dataset(prof_path)
 
-# =====================================================
-# 8. استخراج الإحداثيات وإنشاء النقاط
-# =====================================================
-lons = ds_temp_surf.longitude.values
-lats = ds_temp_surf.latitude.values
+# ------------------------------
+# 8. استخراج الإحداثيات
+# ------------------------------
+lons = ds_phy.longitude.values
+lats = ds_phy.latitude.values
 
+# ------------------------------
+# 9. حساب التارموكلاين لكل نقطة
+# ------------------------------
+def compute_thermocline(temp_vals, depths):
+    """حساب عمق التارموكلاين (أقصى تدرج حراري)."""
+    if len(temp_vals) < 2:
+        return 35.0
+    max_grad = 0.0
+    thermocline_depth = 35.0
+    for i in range(1, len(temp_vals)):
+        grad = abs(temp_vals[i] - temp_vals[i-1])
+        if grad > max_grad:
+            max_grad = grad
+            thermocline_depth = (depths[i] + depths[i-1]) / 2
+    return thermocline_depth
+
+# ------------------------------
+# 10. تجميع النقاط
+# ------------------------------
 points = []
 for i, lat in enumerate(lats):
     for j, lon in enumerate(lons):
-        temp_surf = ds_temp_surf.thetao.isel(time=0, latitude=i, longitude=j).values
+        # درجة حرارة السطح (مؤشر على وجود بحر)
+        temp_surf = ds_phy.thetao.isel(time=0, latitude=i, longitude=j).values
         if np.isnan(temp_surf):
             continue
 
-        temp_surf = float(temp_surf)
-        sal = float(ds_sal.so.isel(time=0, latitude=i, longitude=j).values)
-        u = float(ds_cur.uo.isel(time=0, latitude=i, longitude=j).values)
-        v = float(ds_cur.vo.isel(time=0, latitude=i, longitude=j).values)
-        current_speed = np.sqrt(u**2 + v**2)
+        # قراءة القيم السطحية
+        temp_surf_val = float(temp_surf)
+        salinity = float(ds_phy.so.isel(time=0, latitude=i, longitude=j).values)
+        u = float(ds_phy.uo.isel(time=0, latitude=i, longitude=j).values)
+        v = float(ds_phy.vo.isel(time=0, latitude=i, longitude=j).values)
+        current_speed = np.sqrt(u*u + v*v)
 
-        chl = ds_bio.chl.isel(time=0, latitude=i, longitude=j).values
+        # BGC
+        chl = ds_bgc.chl.isel(time=0, latitude=i, longitude=j).values
         chl = float(chl) if not np.isnan(chl) else np.nan
-        o2 = ds_bio.o2.isel(time=0, latitude=i, longitude=j).values
+        o2 = ds_bgc.o2.isel(time=0, latitude=i, longitude=j).values
         o2 = float(o2) if not np.isnan(o2) else np.nan
         kd490 = ds_opt.kd490.isel(time=0, latitude=i, longitude=j).values
         kd490 = float(kd490) if not np.isnan(kd490) else np.nan
 
-        # حساب التارموكلاين
-        depth_vals = ds_temp_prof.depth.values
+        # حساب التارموكلاين من ملف التعريف
+        # استخرج ملف درجة الحرارة على الأعماق لهذه النقطة
+        depth_vals = ds_prof.depth.values
         temp_profile = []
-        for d in DEPTHS:
-            # نجد أقرب عمق متاح
-            depth_idx = np.argmin(np.abs(depth_vals - d))
-            t = ds_temp_prof.thetao.isel(time=0, latitude=i, longitude=j, depth=depth_idx).values
-            t = float(t) if not np.isnan(t) else np.nan
-            temp_profile.append(t)
+        for d in depth_vals:
+            t = ds_prof.thetao.isel(time=0, latitude=i, longitude=j, depth=...).values
+            # هنا نحتاج إلى فهرس العمق الصحيح – الأسهل استخدام .sel
+            # لكن للتبسيط سنأخذ جميع الأعماق
+        # الطريقة الأسهل: استخدام .sel مع depth متغير
+        # لكن في xarray .sel يتطلب إحداثيات محددة، لذا نستخدم isel مع البحث عن أقرب عمق
+        depth_idx = np.arange(len(depth_vals))
+        temp_profile = []
+        for idx in depth_idx:
+            t = ds_prof.thetao.isel(time=0, latitude=i, longitude=j, depth=idx).values
+            if not np.isnan(t):
+                temp_profile.append(float(t))
+            else:
+                temp_profile.append(np.nan)
 
-        max_grad = 0
-        thermocline_depth = 35.0
-        for k in range(1, len(DEPTHS)):
-            grad = abs(temp_profile[k] - temp_profile[k-1])
-            if grad > max_grad and not (np.isnan(temp_profile[k]) or np.isnan(temp_profile[k-1])):
-                max_grad = grad
-                thermocline_depth = (DEPTHS[k] + DEPTHS[k-1]) / 2
+        # احسب التارموكلاين من الملف الحراري
+        thermocline = compute_thermocline(temp_profile, depth_vals)
 
         points.append({
             "lat": float(lat),
             "lon": float(lon),
-            "temperature": round(temp_surf, 2),
-            "salinity": round(sal, 2),
+            "temperature": round(temp_surf_val, 2),
+            "salinity": round(salinity, 2),
             "chlorophyll": round(chl, 4),
             "oxygen": round(o2, 2),
             "transparency": round(kd490, 2),
             "currentSpeed": round(current_speed, 3),
-            "thermocline": round(thermocline_depth, 1)
+            "thermocline": round(thermocline, 1)
         })
 
 print(f"Processed {len(points)} ocean points")
 
-# =====================================================
-# 9. حفظ data.json
-# =====================================================
+# ------------------------------
+# 11. حفظ النتيجة
+# ------------------------------
 output = {
     "timestamp": yesterday.isoformat(),
     "resolution_km": 4.2,
