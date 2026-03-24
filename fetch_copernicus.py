@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from copernicusmarine import subset
 
 # =====================================================
-# المصادقة – باستخدام المتغيرات التي تمررها GitHub Actions
+# المصادقة
 # =====================================================
 USERNAME = os.environ.get("COPERNICUSMARINE_USERNAME")
 PASSWORD = os.environ.get("COPERNICUSMARINE_PASSWORD")
@@ -15,7 +15,7 @@ if not USERNAME or not PASSWORD:
     raise ValueError("Missing Copernicus credentials")
 
 # =====================================================
-# الإحداثيات الثابتة (من رسائل الخطأ السابقة)
+# الإحداثيات الثابتة
 # =====================================================
 LAT_MIN = 30.1875
 LAT_MAX = 45.97916793823242
@@ -32,11 +32,26 @@ yesterday = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
 print(f"Fetching data for {yesterday}")
 
 # =====================================================
+# دالة مساعدة لاستخراج المسار من نتيجة subset
+# =====================================================
+def get_path_from_result(result):
+    """Extract file path from subset result (could be string or ResponseSubset)."""
+    if isinstance(result, str):
+        return result
+    if hasattr(result, 'filenames') and result.filenames:
+        return result.filenames[0]
+    if hasattr(result, 'filename'):
+        return result.filename
+    # Fallback: if it's a ResponseSubset but no filenames, maybe it's the path?
+    # But we'll raise an error.
+    raise TypeError(f"Cannot extract path from {type(result)}: {result}")
+
+# =====================================================
 # دالة مساعدة للتحميل والفتح
 # =====================================================
 def download_and_open(dataset_id, variables, filename, depth_min=DEPTH_SURFACE, depth_max=DEPTH_SURFACE):
     print(f"Downloading {variables} from {dataset_id}...")
-    path = subset(
+    result = subset(
         dataset_id=dataset_id,
         variables=variables,
         minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
@@ -46,6 +61,7 @@ def download_and_open(dataset_id, variables, filename, depth_min=DEPTH_SURFACE, 
         username=USERNAME, password=PASSWORD,
         output_filename=filename
     )
+    path = get_path_from_result(result)
     if not os.path.exists(path):
         raise RuntimeError(f"File {path} not created")
     file_size = os.path.getsize(path)
@@ -77,10 +93,10 @@ ds_kd = download_and_open(
 )
 
 # =====================================================
-# تحميل ملف تعريف درجة الحرارة (0–100 م)
+# تحميل ملف تعريف درجة الحرارة
 # =====================================================
 print("Downloading temperature profile (0–100 m)...")
-profile_path = subset(
+profile_result = subset(
     dataset_id="cmems_mod_med_phy-tem_anfc_4.2km_P1D-m",
     variables=["thetao"],
     minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
@@ -90,6 +106,7 @@ profile_path = subset(
     username=USERNAME, password=PASSWORD,
     output_filename="profile.nc"
 )
+profile_path = get_path_from_result(profile_result)
 if not os.path.exists(profile_path):
     raise RuntimeError(f"Profile file {profile_path} not created")
 print(f"  Downloaded profile.nc ({os.path.getsize(profile_path)} bytes)")
