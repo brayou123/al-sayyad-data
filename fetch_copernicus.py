@@ -19,10 +19,10 @@ if not USERNAME or not PASSWORD:
 # =====================================================
 LAT_MIN = 30.1875
 LAT_MAX = 45.97916793823242
-LON_MIN = -5.541666507720947   # من التحذير
-LON_MAX = 36.29166793823242    # من التحذير
+LON_MIN = -5.541666507720947
+LON_MAX = 36.29166793823242
 DEPTH_SURFACE = 1.0182366371154785
-DEPTH_MIN_PROFILE = DEPTH_SURFACE   # بدلاً من 0
+DEPTH_MIN_PROFILE = DEPTH_SURFACE
 DEPTH_MAX_PROFILE = 100.0
 
 # =====================================================
@@ -124,8 +124,13 @@ datasets = [
 
 # محاذاة جميع المجموعات لتشترك في نفس الإحداثيات (join='inner')
 aligned = xr.align(*datasets, join='inner')
-# ثم الدمج
 ds_surf = xr.merge(aligned)
+
+# إزالة أي بُعد time إذا كان موجوداً (قد يكون هناك بعد time واحد)
+if 'time' in ds_surf.dims:
+    ds_surf = ds_surf.isel(time=0, drop=True)
+elif 'time' in ds_surf.coords:
+    ds_surf = ds_surf.drop_vars('time')
 
 # =====================================================
 # حساب التارموكلاين (باستخدام sel بدلاً من isel)
@@ -163,26 +168,28 @@ for i, lat in enumerate(lats):
         thermocline_map[i, j] = thermo_depth
 
 # =====================================================
-# بناء قائمة النقاط
+# بناء قائمة النقاط (بدون استخدام time)
 # =====================================================
 points = []
 for i, lat in enumerate(lats):
     for j, lon in enumerate(lons):
-        temp_val = ds_surf.thetao.isel(time=0, latitude=i, longitude=j).values
+        # استخراج القيم باستخدام isel(latitude=i, longitude=j) مباشرة
+        # ds_surf ليس له بُعد time بعد التعديل
+        temp_val = ds_surf.thetao.isel(latitude=i, longitude=j).values
         if np.isnan(temp_val):
             continue
 
         temp = float(temp_val)
-        sal = float(ds_surf.so.isel(time=0, latitude=i, longitude=j).values)
-        u = float(ds_surf.uo.isel(time=0, latitude=i, longitude=j).values)
-        v = float(ds_surf.vo.isel(time=0, latitude=i, longitude=j).values)
+        sal = float(ds_surf.so.isel(latitude=i, longitude=j).values)
+        u = float(ds_surf.uo.isel(latitude=i, longitude=j).values)
+        v = float(ds_surf.vo.isel(latitude=i, longitude=j).values)
         current_speed = np.sqrt(u**2 + v**2)
 
-        chl = ds_surf.chl.isel(time=0, latitude=i, longitude=j).values
+        chl = ds_surf.chl.isel(latitude=i, longitude=j).values
         chl = float(chl) if not np.isnan(chl) else np.nan
-        o2 = ds_surf.o2.isel(time=0, latitude=i, longitude=j).values
+        o2 = ds_surf.o2.isel(latitude=i, longitude=j).values
         o2 = float(o2) if not np.isnan(o2) else np.nan
-        kd = ds_surf.kd490.isel(time=0, latitude=i, longitude=j).values
+        kd = ds_surf.kd490.isel(latitude=i, longitude=j).values
         kd = float(kd) if not np.isnan(kd) else np.nan
 
         points.append({
