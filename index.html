@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>Hotspots — Al-Sayyad</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=IBM+Plex+Mono:wght@400;500&family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  /* جميع الـ CSS كما هو – لم يتغير */
+  :root {
+    --bg: #060d14;
+    --surface: #0b1623;
+    --surface2: #101f30;
+    --border: #1a2e44;
+    --accent: #00d4ff;
+    --accent2: #0099bb;
+    --text: #c8dde8;
+    --text-dim: #4a6a80;
+    --radius: 10px;
+    --sheet-collapsed: 64px;
+    --sheet-mid: 55vh;
+    --sheet-full: 92vh;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); font-family: 'Tajawal', sans-serif; color: var(--text); }
+
+  #map { position: fixed; inset: 0; z-index: 1; }
+  .leaflet-tile-pane { filter: brightness(0.52) saturate(0.65) hue-rotate(195deg); }
+  .leaflet-control-zoom { margin-bottom: calc(var(--sheet-collapsed) + 16px) !important; }
+
+  /* ═══ BOTTOM SHEET ═══ */
+  #sheet {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    z-index: 100;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    border-radius: 18px 18px 0 0;
+    display: flex; flex-direction: column;
+    transition: height 0.38s cubic-bezier(0.32,0.72,0,1);
+    height: var(--sheet-mid);
+    will-change: height; touch-action: none;
+  }
+  #sheet.collapsed { height: var(--sheet-collapsed); }
+  #sheet.full      { height: var(--sheet-full); }
+
+  #drag-handle {
+    width: 100%; padding: 10px 0 6px;
+    display: flex; justify-content: center; align-items: center;
+    cursor: grab; flex-shrink: 0;
+  }
+  #drag-handle::after {
+    content: ''; width: 38px; height: 4px;
+    border-radius: 2px; background: var(--border);
+  }
+
+  #sheet-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 18px 10px; flex-shrink: 0;
+  }
+  #sheet-title {
+    font-family: 'Syne', sans-serif; font-size: 16px; font-weight: 800;
+    letter-spacing: 2.5px; text-transform: uppercase;
+    color: var(--accent); text-shadow: 0 0 16px rgba(0,212,255,0.35);
+    display: flex; align-items: center; gap: 8px;
+  }
+  #gps-badge {
+    display: flex; align-items: center; gap: 6px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: var(--text-dim);
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 20px; padding: 4px 10px;
+  }
+  .gps-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--text-dim); flex-shrink: 0;
+    transition: background 0.4s, box-shadow 0.4s;
+  }
+  .gps-dot.active { background: #22cc77; box-shadow: 0 0 6px #22cc77; animation: blink 2s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.35} }
+
+  #sheet-body {
+    flex: 1; overflow-y: auto; overflow-x: hidden;
+    padding: 4px 0 20px;
+    scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+  }
+  #sheet.collapsed #sheet-body { overflow: hidden; }
+
+  /* ═══ NAV BAR (collapsed state) ═══ */
+  #nav-bar {
+    display: none; align-items: center; justify-content: space-between;
+    padding: 0 18px; height: var(--sheet-collapsed); flex-shrink: 0;
+  }
+  #sheet.collapsed #nav-bar    { display: flex; }
+  #sheet.collapsed #sheet-header,
+  #sheet.collapsed #sheet-body { display: none; }
+
+  .nav-result-pill {
+    display: flex; align-items: center; gap: 8px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--text-dim);
+  }
+  .nav-count { color: var(--accent); font-size: 14px; font-weight: 700; }
+  #expand-btn {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 20px; color: var(--text);
+    font-family: 'Syne', sans-serif; font-size: 10px; font-weight: 700;
+    letter-spacing: 1px; padding: 7px 14px; cursor: pointer; transition: all 0.2s;
+  }
+  #expand-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ═══ ACCORDION ═══ */
+  .acc-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 11px 18px; cursor: pointer; user-select: none;
+    border-bottom: 1px solid transparent; transition: background 0.2s;
+  }
+  .acc-header:hover { background: var(--surface2); }
+  .acc-header.open  { border-bottom-color: var(--border); }
+  .acc-title {
+    font-family: 'Syne', sans-serif; font-size: 12px; font-weight: 700;
+    letter-spacing: 1.5px; text-transform: uppercase;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .acc-chevron { font-size: 9px; color: var(--text-dim); transition: transform 0.3s; }
+  .acc-header.open .acc-chevron { transform: rotate(180deg); }
+  .acc-body { max-height: 0; overflow: hidden; transition: max-height 0.35s ease; }
+  .acc-body.open { max-height: 3000px; }
+
+  /* ═══ SPECIES CARDS (checkbox + expand) ═══ */
+  .species-list { padding: 8px 12px; display: flex; flex-direction: column; gap: 5px; }
+  .species-card { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; transition: border-color 0.2s; }
+  .species-card.selected { border-color: var(--card-color, var(--accent)); }
+  .species-card-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 13px; cursor: pointer; background: var(--surface2);
+    user-select: none; transition: background 0.2s;
+  }
+  .species-card-header:active { opacity: 0.85; }
+  .species-left { display: flex; align-items: center; gap: 9px; flex: 1; }
+  .species-checkbox {
+    width: 18px; height: 18px; cursor: pointer;
+    accent-color: var(--card-color, var(--accent));
+    margin-right: 6px;
+  }
+  .species-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--card-color, #888); box-shadow: 0 0 7px var(--card-color, #888); flex-shrink: 0;
+  }
+  .species-name { font-size: 13px; font-weight: 700; }
+  .species-sci { font-family: 'IBM Plex Mono', monospace; font-size: 8px; color: var(--text-dim); font-style: italic; margin-top: 1px; }
+  .species-chevron { font-size: 8px; color: var(--text-dim); margin-left: 5px; transition: transform 0.22s; }
+  .species-card.expanded .species-chevron { transform: rotate(180deg); }
+
+  /* SLIDERS */
+  .sliders-body { max-height: 0; overflow: hidden; transition: max-height 0.28s ease; background: var(--bg); }
+  .species-card.expanded .sliders-body { max-height: 900px; }
+  .sliders-inner { padding: 12px; display: flex; flex-direction: column; gap: 13px; }
+  .slider-row label {
+    display: flex; justify-content: space-between;
+    font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: var(--text-dim);
+    margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.4px;
+  }
+  .slider-row label span { color: var(--accent); font-weight: 500; }
+  .range-wrap { position: relative; height: 20px; display: flex; align-items: center; }
+  .range-track { width: 100%; height: 3px; background: var(--border); border-radius: 2px; position: relative; }
+  .range-fill { position: absolute; height: 100%; background: var(--card-color, var(--accent)); border-radius: 2px; opacity: 0.75; }
+  input[type=range] {
+    position: absolute; width: 100%; appearance: none; background: transparent;
+    height: 20px; cursor: pointer; pointer-events: none;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    appearance: none; width: 14px; height: 14px; border-radius: 50%;
+    background: var(--card-color, var(--accent)); box-shadow: 0 0 6px var(--card-color, var(--accent));
+    pointer-events: all; cursor: grab; border: 2px solid var(--bg); transition: transform 0.12s;
+  }
+  input[type=range]::-webkit-slider-thumb:active { transform: scale(1.3); cursor: grabbing; }
+
+  /* ADD SPECIES */
+  .add-species-btn {
+    margin: 6px 12px; padding: 10px;
+    border: 1px dashed var(--border); border-radius: var(--radius);
+    background: transparent; color: var(--text-dim);
+    font-family: 'Syne', sans-serif; font-size: 11px; letter-spacing: 1px;
+    cursor: pointer; width: calc(100% - 24px); text-align: center; transition: all 0.2s;
+  }
+  .add-species-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(0,212,255,0.04); }
+
+  /* SEARCH */
+  .search-wrap { padding: 12px 12px 8px; }
+  #search-btn {
+    width: 100%; padding: 13px;
+    background: linear-gradient(135deg, var(--accent2), var(--accent));
+    border: none; border-radius: var(--radius);
+    font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 800;
+    letter-spacing: 3px; text-transform: uppercase; color: #000; cursor: pointer;
+    transition: transform 0.1s, box-shadow 0.2s, opacity 0.2s;
+    box-shadow: 0 0 20px rgba(0,212,255,0.2);
+  }
+  #search-btn:hover { box-shadow: 0 0 28px rgba(0,212,255,0.4); }
+  #search-btn:active { transform: scale(0.97); }
+  #search-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  #results-bar {
+    padding: 8px 12px 4px; font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px; color: var(--text-dim); min-height: 28px;
+    display: flex; align-items: center; gap: 7px;
+  }
+  .result-count { color: var(--accent); font-weight: 500; font-size: 11px; }
+  .spinner {
+    width: 12px; height: 12px; border: 2px solid var(--border);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin 0.7s linear infinite; flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ═══ CANVAS ═══ */
+  #hotspot-canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 50; }
+
+  /* ═══ POPUP ═══ */
+  #hotspot-popup {
+    position: fixed;
+    background: rgba(6,13,20,0.96); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px 16px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+    z-index: 600; display: none; min-width: 190px; max-width: 240px;
+    backdrop-filter: blur(10px); pointer-events: none;
+    animation: popIn 0.2s cubic-bezier(0.34,1.56,0.64,1);
+  }
+  @keyframes popIn { from { transform: scale(0.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  #hotspot-popup h3 { font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 800; margin-bottom: 6px; }
+  .popup-match { font-size: 22px; font-weight: 700; margin-bottom: 5px; font-family: 'Syne', sans-serif; }
+  .popup-dist { font-size: 10px; color: var(--text-dim); margin-bottom: 8px; }
+  .popup-vars { color: var(--text-dim); font-size: 9px; line-height: 1.8; border-top: 1px solid var(--border); padding-top: 7px; }
+  .popup-var-item::before { content: '· '; color: var(--accent); }
+
+  /* ═══ MODAL ═══ */
+  #modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.75); z-index: 1000;
+    align-items: center; justify-content: center; backdrop-filter: blur(5px);
+  }
+  #modal-overlay.show { display: flex; }
+  #modal {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; padding: 22px;
+    width: 88vw; max-width: 320px; max-height: 88vh; overflow-y: auto;
+  }
+  #modal h2 {
+    font-family: 'Syne', sans-serif; font-size: 14px; font-weight: 800;
+    letter-spacing: 2px; text-transform: uppercase; color: var(--accent); margin-bottom: 18px;
+  }
+  .modal-field { margin-bottom: 13px; }
+  .modal-field label {
+    display: block; font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px; color: var(--text-dim); text-transform: uppercase;
+    letter-spacing: 1px; margin-bottom: 5px;
+  }
+  .modal-field input[type=text] {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 7px; padding: 9px 11px; color: var(--text); font-size: 14px;
+    outline: none; transition: border-color 0.2s;
+  }
+  .modal-field input[type=text]:focus { border-color: var(--accent); }
+  .color-row { display: flex; gap: 7px; flex-wrap: wrap; }
+  .color-chip {
+    width: 26px; height: 26px; border-radius: 50%; cursor: pointer;
+    border: 2px solid transparent; transition: transform 0.14s, border-color 0.14s;
+  }
+  .color-chip:hover { transform: scale(1.18); }
+  .color-chip.selected { border-color: #fff; transform: scale(1.1); }
+  .modal-sliders { margin-top: 14px; display: flex; flex-direction: column; gap: 11px; }
+  .modal-btns { display: flex; gap: 8px; margin-top: 18px; }
+  .modal-btns button {
+    flex: 1; padding: 10px; border-radius: 8px; border: none;
+    font-family: 'Syne', sans-serif; font-size: 11px; font-weight: 700;
+    letter-spacing: 1px; text-transform: uppercase; cursor: pointer; transition: opacity 0.2s;
+  }
+  .btn-cancel { background: var(--surface2); color: var(--text-dim); }
+  .btn-save   { background: var(--accent); color: #000; }
+  .modal-btns button:hover { opacity: 0.82; }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+<canvas id="hotspot-canvas"></canvas>
+
+<div id="hotspot-popup">
+  <h3 id="popup-name"></h3>
+  <div class="popup-match" id="popup-pct"></div>
+  <div class="popup-dist" id="popup-dist"></div>
+  <div class="popup-vars" id="popup-vars"></div>
+</div>
+
+<div id="sheet">
+  <div id="drag-handle"></div>
+
+  <div id="sheet-header">
+    <div id="sheet-title">🎣 Hotspots</div>
+    <div id="gps-badge">
+      <div class="gps-dot" id="gps-dot"></div>
+      <span id="gps-text">Locating…</span>
+    </div>
+  </div>
+
+  <div id="nav-bar">
+    <div class="nav-result-pill">
+      <span class="nav-count" id="nav-count">0</span>
+      <span>hotspots found</span>
+    </div>
+    <button id="expand-btn">▲ ADJUST</button>
+  </div>
+
+  <div id="sheet-body">
+    <div class="acc-header open" id="species-acc-header">
+      <div class="acc-title">🐟 Species</div>
+      <span class="acc-chevron">▼</span>
+    </div>
+    <div class="acc-body open" id="species-acc-body">
+      <div class="species-list" id="species-list"></div>
+      <button class="add-species-btn" id="add-species-btn">+ Add Species</button>
+      <div class="search-wrap">
+        <button id="search-btn" disabled>SEARCH HOTSPOTS</button>
+      </div>
+      <div id="results-bar">
+        <span id="results-text">Select species and press Search.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="modal-overlay">
+  <div id="modal">
+    <h2>Add Species</h2>
+    <div class="modal-field">
+      <label>Name</label>
+      <input type="text" id="modal-name" placeholder="e.g. Mackerel" />
+    </div>
+    <div class="modal-field">
+      <label>Color</label>
+      <div class="color-row" id="color-row"></div>
+    </div>
+    <div class="modal-sliders" id="modal-sliders"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" id="modal-cancel">Cancel</button>
+      <button class="btn-save" id="modal-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ══════════════════════════════════════════════════════
+//  CONFIG & GLOBALS
+// ══════════════════════════════════════════════════════
+const SLIDER_VARS = [
+  { key:'temperature',  label:'Temperature',      unit:'°C',    min:0,  max:35,  step:0.5 },
+  { key:'chlorophyll',  label:'Chlorophyll',      unit:'mg/m³', min:0,  max:10,  step:0.1 },
+  { key:'oxygen',       label:'Dissolved Oxygen', unit:'ml/l',  min:0,  max:12,  step:0.1 },
+  { key:'salinity',     label:'Salinity',         unit:'ppt',   min:30, max:42,  step:0.1 },
+  { key:'transparency', label:'Transparency',     unit:'m',     min:0,  max:50,  step:1   },
+  { key:'currentSpeed', label:'Current Speed',    unit:'kn',    min:0,  max:5,   step:0.1 }
+];
+
+const PREDEFINED = [
+  { id:'sardine', name:'Sardine', sci:'Sardina pilchardus',     color:'#00aaff',
+    ranges:{ temperature:[14,20], chlorophyll:[1.0,3.5], oxygen:[5.5,8.5], salinity:[35,38], transparency:[5,25],  currentSpeed:[0,1.0] } },
+  { id:'anchovy', name:'Anchovy', sci:'Engraulis encrasicolus', color:'#ff4455',
+    ranges:{ temperature:[14,22], chlorophyll:[1.5,4.0], oxygen:[5.0,8.0], salinity:[36,38], transparency:[8,20],  currentSpeed:[0,1.5] } },
+  { id:'lacha',   name:'Lacha',   sci:'Sardinella aurita',      color:'#22cc77',
+    ranges:{ temperature:[16,24], chlorophyll:[0.8,3.0], oxygen:[5.0,8.5], salinity:[35,38], transparency:[3,15],  currentSpeed:[0,2.0] } }
+];
+
+const COLOR_PALETTE = ['#00aaff','#ff4455','#22cc77','#ffaa00','#cc44ff','#ff6600','#00ffcc','#ff44aa','#00eebb','#44aaff'];
+
+let userLat = null, userLon = null;
+let map, userMarker, radiusCircle;
+let hotspotResults = [];
+let animFrame;
+let oceanData = null;               // stores data.json
+let species = JSON.parse(localStorage.getItem('hs_species') || 'null')
+  || PREDEFINED.map(s => ({ ...s, ranges: { ...s.ranges }, selected: false, expanded: false }));
+let modalColor = COLOR_PALETTE[0];
+let modalRanges = {};
+SLIDER_VARS.forEach(v => modalRanges[v.key] = [+(v.min+(v.max-v.min)*0.2).toFixed(1), +(v.min+(v.max-v.min)*0.6).toFixed(1)]);
+
+// ══════════════════════════════════════════════════════
+//  UTILITIES
+// ══════════════════════════════════════════════════════
+function haversineKm(la1, lo1, la2, lo2) {
+  const R = 6371, dL = (la2-la1)*Math.PI/180, dO = (lo2-lo1)*Math.PI/180;
+  const a = Math.sin(dL/2)**2 + Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dO/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function hexA(hex, alpha) {
+  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+  return `rgba(${r},${g},${b},${Math.max(0,Math.min(1,alpha)).toFixed(2)})`;
+}
+
+// ══════════════════════════════════════════════════════
+//  DATA LOADING (from data.json)
+// ══════════════════════════════════════════════════════
+async function loadOceanData() {
+  try {
+    const response = await fetch('data.json');
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const json = await response.json();
+    oceanData = json;
+    console.log(`Loaded ${oceanData.points.length} points from ${oceanData.timestamp}`);
+    if (userLat) document.getElementById('search-btn').disabled = false;
+  } catch (err) {
+    console.error('Failed to load ocean data:', err);
+    document.getElementById('results-text').textContent = '⚠️ Failed to load environmental data. Please refresh.';
+  }
+}
+
+// ══════════════════════════════════════════════════════
+//  SPECIES MATCHING (local)
+// ══════════════════════════════════════════════════════
+function matchSpecies(point, ranges) {
+  const varMap = [
+    { key: 'temperature',  pointKey: 'temperature',  label: 'Temperature' },
+    { key: 'chlorophyll',  pointKey: 'chlorophyll',  label: 'Chlorophyll' },
+    { key: 'oxygen',       pointKey: 'oxygen',       label: 'Dissolved O₂' },
+    { key: 'salinity',     pointKey: 'salinity',     label: 'Salinity' },
+    { key: 'transparency', pointKey: 'transparency', label: 'Transparency' },
+    { key: 'currentSpeed', pointKey: 'currentSpeed', label: 'Current Speed' }
+  ];
+  let total = 0;
+  const matched = [];
+  for (const v of varMap) {
+    const range = ranges[v.key];
+    if (!range) { total += 1; continue; }
+    const [lo, hi] = range;
+    const val = point[v.pointKey];
+    if (val == null) { total += 0.5; continue; }
+    if (val >= lo && val <= hi) { total += 1; matched.push(v.label); }
+    else {
+      const margin = (hi - lo) * 0.2 || 1;
+      total += Math.max(0, 1 - (val < lo ? lo - val : val - hi) / margin);
+    }
+  }
+  const thermoclineDepth = point.thermocline !== undefined ? point.thermocline : 35;
+  const thermoclineOk = (thermoclineDepth >= 15 && thermoclineDepth <= 80);
+  const factor = thermoclineOk ? 1.1 : 0.85;
+  const score = Math.min(1, (total / varMap.length) * factor);
+  return { score, matchedVars: matched };
+}
+
+function searchHotspots(selectedSpecies) {
+  if (!oceanData || !oceanData.points) throw new Error('Ocean data not loaded');
+  const radiusKm = 100;
+  const pointsInRange = oceanData.points.filter(p => {
+    const dist = haversineKm(userLat, userLon, p.lat, p.lon);
+    return dist <= radiusKm;
+  });
+  const hotspots = [];
+  for (const point of pointsInRange) {
+    for (const sp of selectedSpecies) {
+      const { score, matchedVars } = matchSpecies(point, sp.ranges);
+      if (score >= 0.5) {
+        hotspots.push({
+          lat: point.lat,
+          lon: point.lon,
+          match: +(score * 100).toFixed(1),
+          color: sp.color,
+          name: sp.name,
+          vars: matchedVars
+        });
+        break;
+      }
+    }
+  }
+  hotspots.sort((a,b) => b.match - a.match);
+  return hotspots;
+}
+
+// ══════════════════════════════════════════════════════
+//  MAP & GPS (unchanged)
+// ══════════════════════════════════════════════════════
+map = L.map('map', { zoomControl: false, attributionControl: false }).setView([36.7, 3.1], 7);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+const canvasEl = document.getElementById('hotspot-canvas');
+const ctx = canvasEl.getContext('2d');
+function resizeCanvas() { canvasEl.width = window.innerWidth; canvasEl.height = window.innerHeight; }
+resizeCanvas();
+window.addEventListener('resize', () => { resizeCanvas(); drawHotspots(); });
+map.on('move zoom', drawHotspots);
+
+function initGPS() {
+  if (!navigator.geolocation) { setGPSText('GPS not supported'); return; }
+  navigator.geolocation.getCurrentPosition(pos => {
+    userLat = pos.coords.latitude;
+    userLon = pos.coords.longitude;
+    document.getElementById('gps-dot').classList.add('active');
+    setGPSText(`${userLat.toFixed(3)}°N  ${userLon.toFixed(3)}°E`);
+    if (userMarker) map.removeLayer(userMarker);
+    userMarker = L.circleMarker([userLat, userLon], {
+      radius: 7, color: '#22cc77', fillColor: '#22cc77', fillOpacity: 1, weight: 3
+    }).addTo(map);
+    if (radiusCircle) map.removeLayer(radiusCircle);
+    radiusCircle = L.circle([userLat, userLon], {
+      radius: 100000, color: '#00d4ff', fillColor: '#00d4ff',
+      fillOpacity: 0.04, weight: 1, dashArray: '6 4'
+    }).addTo(map);
+    if (oceanData) document.getElementById('search-btn').disabled = false;
+  }, () => setGPSText('GPS denied'), { enableHighAccuracy: true });
+}
+function setGPSText(t) { document.getElementById('gps-text').textContent = t; }
+initGPS();
+
+// ══════════════════════════════════════════════════════
+//  DRAW HOTSPOTS (unchanged animation)
+// ══════════════════════════════════════════════════════
+let phase = 0;
+function drawHotspots() {
+  cancelAnimationFrame(animFrame);
+  ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+  if (!hotspotResults.length) return;
+  function loop() {
+    ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+    phase += 0.022;
+    hotspotResults.forEach(h => {
+      const pt = map.latLngToContainerPoint([h.lat, h.lon]);
+      const pulse = 0.6 + 0.4 * Math.sin(phase + h.lat * 8 + h.lon * 5);
+      const r = 11 + 9 * pulse;
+      const grad = ctx.createRadialGradient(pt.x, pt.y, 0, pt.x, pt.y, r * 2.8);
+      grad.addColorStop(0,    hexA(h.color, 0.6  * pulse));
+      grad.addColorStop(0.45, hexA(h.color, 0.18 * pulse));
+      grad.addColorStop(1,    hexA(h.color, 0));
+      ctx.beginPath(); ctx.arc(pt.x, pt.y, r * 2.8, 0, Math.PI*2);
+      ctx.fillStyle = grad; ctx.fill();
+      ctx.beginPath(); ctx.arc(pt.x, pt.y, r * 0.42, 0, Math.PI*2);
+      ctx.fillStyle = hexA(h.color, 0.92);
+      ctx.shadowColor = h.color; ctx.shadowBlur = 12; ctx.fill(); ctx.shadowBlur = 0;
+    });
+    animFrame = requestAnimationFrame(loop);
+  }
+  loop();
+}
+
+// ══════════════════════════════════════════════════════
+//  POPUP (unchanged)
+// ══════════════════════════════════════════════════════
+map.getContainer().addEventListener('click', e => {
+  const mx = e.clientX, my = e.clientY;
+  const popup = document.getElementById('hotspot-popup');
+  let hit = null, bestD = 28;
+  hotspotResults.forEach(h => {
+    const pt = map.latLngToContainerPoint([h.lat, h.lon]);
+    const d = Math.hypot(pt.x - mx, pt.y - my);
+    if (d < bestD) { bestD = d; hit = h; }
+  });
+  if (hit) {
+    popup.style.display = 'block';
+    let left = mx + 16, top = my - 20;
+    if (left + 240 > window.innerWidth  - 10) left = mx - 256;
+    if (top  + 160 > window.innerHeight - 80) top  = my - 170;
+    popup.style.left = left + 'px'; popup.style.top = top + 'px';
+    popup.style.borderColor = hit.color;
+    document.getElementById('popup-name').style.color = hit.color;
+    document.getElementById('popup-name').textContent = hit.name;
+    document.getElementById('popup-pct').textContent  = hit.match.toFixed(0) + '% match';
+    document.getElementById('popup-pct').style.color  = hit.color;
+    if (userLat) {
+      const km = haversineKm(userLat, userLon, hit.lat, hit.lon);
+      document.getElementById('popup-dist').textContent =
+        '📍 ' + (km < 1 ? `${(km*1000).toFixed(0)} m from you` : `${km.toFixed(1)} km from you`);
+    }
+    const varsEl = document.getElementById('popup-vars');
+    varsEl.innerHTML = '';
+    (hit.vars || []).forEach(v => {
+      const d = document.createElement('div');
+      d.className = 'popup-var-item'; d.textContent = v; varsEl.appendChild(d);
+    });
+  } else {
+    popup.style.display = 'none';
+  }
+});
+
+// ══════════════════════════════════════════════════════
+//  SPECIES UI (checkbox + expand)
+// ══════════════════════════════════════════════════════
+function renderSpecies() {
+  const list = document.getElementById('species-list');
+  list.innerHTML = '';
+  species.forEach((sp, i) => {
+    const card = document.createElement('div');
+    card.className = 'species-card' + (sp.selected ? ' selected' : '') + (sp.expanded ? ' expanded' : '');
+    card.style.setProperty('--card-color', sp.color);
+    card.innerHTML = `
+      <div class="species-card-header">
+        <div class="species-left">
+          <input type="checkbox" class="species-checkbox" ${sp.selected ? 'checked' : ''}>
+          <div class="species-dot"></div>
+          <div>
+            <div class="species-name">${sp.name}</div>
+            ${sp.sci ? `<div class="species-sci">${sp.sci}</div>` : ''}
+          </div>
+        </div>
+        <div class="species-chevron">▼</div>
+      </div>
+      <div class="sliders-body">
+        <div class="sliders-inner" id="sliders-${i}"></div>
+      </div>`;
+    // Handle checkbox click (stop propagation to header)
+    const chk = card.querySelector('.species-checkbox');
+    chk.addEventListener('click', (e) => {
+      e.stopPropagation();
+      sp.selected = chk.checked;
+      saveSpecies();
+      renderSpecies();  // re-render to update class
+    });
+    // Header click toggles expansion (only)
+    const header = card.querySelector('.species-card-header');
+    header.addEventListener('click', (e) => {
+      if (e.target === chk) return;
+      sp.expanded = !sp.expanded;
+      saveSpecies();
+      renderSpecies();
+    });
+    list.appendChild(card);
+    if (sp.expanded) buildSliders(document.getElementById(`sliders-${i}`), sp, i);
+  });
+}
+
+function buildSliders(container, sp, idx) {
+  container.innerHTML = '';
+  SLIDER_VARS.forEach(v => {
+    const [mn, mx] = sp.ranges[v.key] || [v.min, v.max];
+    const row = document.createElement('div');
+    row.className = 'slider-row';
+    row.innerHTML = `
+      <label>${v.label} <span id="lbl-${idx}-${v.key}">${mn}–${mx} ${v.unit}</span></label>
+      <div class="range-wrap">
+        <div class="range-track"><div class="range-fill" id="fill-${idx}-${v.key}"></div></div>
+        <input type="range" id="rmin-${idx}-${v.key}" min="${v.min}" max="${v.max}" step="${v.step}" value="${mn}" />
+        <input type="range" id="rmax-${idx}-${v.key}" min="${v.min}" max="${v.max}" step="${v.step}" value="${mx}" />
+      </div>`;
+    container.appendChild(row);
+    const rMin = container.querySelector(`#rmin-${idx}-${v.key}`);
+    const rMax = container.querySelector(`#rmax-${idx}-${v.key}`);
+    const lbl  = container.querySelector(`#lbl-${idx}-${v.key}`);
+    const fill = container.querySelector(`#fill-${idx}-${v.key}`);
+    function upd() {
+      let lo = parseFloat(rMin.value), hi = parseFloat(rMax.value);
+      if (lo > hi) [lo, hi] = [hi, lo];
+      const r = v.max - v.min;
+      fill.style.left  = ((lo-v.min)/r*100)+'%';
+      fill.style.width = ((hi-lo)/r*100)+'%';
+      lbl.textContent  = `${lo}–${hi} ${v.unit}`;
+      sp.ranges[v.key] = [lo, hi];
+      saveSpecies();
+    }
+    rMin.addEventListener('input', upd); rMax.addEventListener('input', upd); upd();
+  });
+}
+
+function saveSpecies() { localStorage.setItem('hs_species', JSON.stringify(species)); }
+
+// ══════════════════════════════════════════════════════
+//  SEARCH (local)
+// ══════════════════════════════════════════════════════
+document.getElementById('search-btn').addEventListener('click', async () => {
+  const selected = species.filter(s => s.selected);
+  if (!selected.length) {
+    document.getElementById('results-text').textContent = 'اختر نوعاً واحداً على الأقل.';
+    return;
+  }
+  if (!userLat) {
+    document.getElementById('results-text').textContent = 'بانتظار تحديد الموقع...';
+    return;
+  }
+  if (!oceanData) {
+    document.getElementById('results-text').textContent = 'جاري تحميل البيانات البيئية...';
+    return;
+  }
+
+  const btn = document.getElementById('search-btn');
+  btn.disabled = true;
+  btn.textContent = 'جاري البحث...';
+  document.getElementById('results-text').innerHTML = '<div class="spinner"></div> تحليل البيانات...';
+
+  try {
+    const hotspots = searchHotspots(selected);
+    hotspotResults = hotspots;
+    document.getElementById('results-text').innerHTML =
+      `<span class="result-count">${hotspotResults.length}</span> hotspots found`;
+    drawHotspots();
+    collapseSheet();
+  } catch (err) {
+    document.getElementById('results-text').textContent = `خطأ: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'SEARCH HOTSPOTS';
+  }
+});
+
+// ── COLLAPSE / EXPAND (unchanged) ──
+function collapseSheet() {
+  const sheet = document.getElementById('sheet');
+  sheet.style.height = '';
+  sheet.classList.remove('full');
+  sheet.classList.add('collapsed');
+  document.getElementById('nav-count').textContent = hotspotResults.length;
+}
+document.getElementById('expand-btn').addEventListener('click', () => {
+  const sheet = document.getElementById('sheet');
+  sheet.classList.remove('collapsed');
+  sheet.style.height = 'var(--sheet-mid)';
+});
+
+// ── DRAG HANDLE (unchanged) ──
+(function () {
+  const sheet = document.getElementById('sheet');
+  const handle = document.getElementById('drag-handle');
+  let startY, startH, dragging = false;
+  function onStart(e) {
+    dragging = true;
+    startY = e.touches ? e.touches[0].clientY : e.clientY;
+    startH = sheet.getBoundingClientRect().height;
+    sheet.style.transition = 'none';
+    e.preventDefault();
+  }
+  function onMove(e) {
+    if (!dragging) return;
+    const y = e.touches ? e.touches[0].clientY : e.clientY;
+    const newH = Math.max(64, Math.min(window.innerHeight * 0.94, startH + (startY - y)));
+    sheet.style.height = newH + 'px';
+    sheet.classList.remove('collapsed', 'full');
+    e.preventDefault();
+  }
+  function onEnd() {
+    if (!dragging) return; dragging = false;
+    sheet.style.transition = '';
+    const h = sheet.getBoundingClientRect().height;
+    const vh = window.innerHeight;
+    if (h < vh * 0.18)      { sheet.classList.add('collapsed'); sheet.style.height = ''; }
+    else if (h > vh * 0.75) { sheet.classList.add('full');      sheet.style.height = ''; }
+    else                     { sheet.style.height = h + 'px'; }
+  }
+  handle.addEventListener('touchstart', onStart, { passive: false });
+  handle.addEventListener('mousedown',  onStart);
+  window.addEventListener('touchmove',  onMove,  { passive: false });
+  window.addEventListener('mousemove',  onMove);
+  window.addEventListener('touchend',   onEnd);
+  window.addEventListener('mouseup',    onEnd);
+})();
+
+// ══════════════════════════════════════════════════════
+//  ADD SPECIES MODAL (unchanged logic)
+// ══════════════════════════════════════════════════════
+function buildColorRow() {
+  const row = document.getElementById('color-row'); row.innerHTML = '';
+  COLOR_PALETTE.forEach(c => {
+    const chip = document.createElement('div');
+    chip.className = 'color-chip' + (c === modalColor ? ' selected' : '');
+    chip.style.background = c;
+    chip.addEventListener('click', () => { modalColor = c; buildColorRow(); buildModalSliders(); });
+    row.appendChild(chip);
+  });
+}
+function buildModalSliders() {
+  const cont = document.getElementById('modal-sliders'); cont.innerHTML = '';
+  SLIDER_VARS.forEach(v => {
+    const [mn, mx] = modalRanges[v.key];
+    const row = document.createElement('div');
+    row.className = 'slider-row'; row.style.setProperty('--card-color', modalColor);
+    row.innerHTML = `
+      <label>${v.label} <span id="mlbl-${v.key}">${mn}–${mx} ${v.unit}</span></label>
+      <div class="range-wrap">
+        <div class="range-track"><div class="range-fill" id="mfill-${v.key}" style="background:${modalColor}"></div></div>
+        <input type="range" id="mrmin-${v.key}" min="${v.min}" max="${v.max}" step="${v.step}" value="${mn}" />
+        <input type="range" id="mrmax-${v.key}" min="${v.min}" max="${v.max}" step="${v.step}" value="${mx}" />
+      </div>`;
+    cont.appendChild(row);
+    const rMin = cont.querySelector(`#mrmin-${v.key}`), rMax = cont.querySelector(`#mrmax-${v.key}`);
+    const lbl  = cont.querySelector(`#mlbl-${v.key}`),  fill = cont.querySelector(`#mfill-${v.key}`);
+    function upd() {
+      let lo = parseFloat(rMin.value), hi = parseFloat(rMax.value);
+      if (lo > hi) [lo, hi] = [hi, lo];
+      const r = v.max - v.min;
+      fill.style.left = ((lo-v.min)/r*100)+'%'; fill.style.width = ((hi-lo)/r*100)+'%';
+      lbl.textContent = `${lo}–${hi} ${v.unit}`; modalRanges[v.key] = [lo, hi];
+    }
+    rMin.addEventListener('input', upd); rMax.addEventListener('input', upd); upd();
+  });
+}
+document.getElementById('add-species-btn').addEventListener('click', () => {
+  modalColor = COLOR_PALETTE[species.length % COLOR_PALETTE.length];
+  modalRanges = JSON.parse(JSON.stringify(SLIDER_VARS.reduce((acc,v) => { acc[v.key] = [v.min+(v.max-v.min)*0.2, v.min+(v.max-v.min)*0.6]; return acc; }, {})));
+  document.getElementById('modal-name').value = '';
+  buildColorRow(); buildModalSliders();
+  document.getElementById('modal-overlay').classList.add('show');
+});
+document.getElementById('modal-cancel').addEventListener('click', () =>
+  document.getElementById('modal-overlay').classList.remove('show'));
+document.getElementById('modal-save').addEventListener('click', () => {
+  const name = document.getElementById('modal-name').value.trim();
+  if (!name) { document.getElementById('modal-name').focus(); return; }
+  species.push({ id:'custom_'+Date.now(), name, sci:'', color:modalColor,
+    ranges: JSON.parse(JSON.stringify(modalRanges)), selected:true, expanded:false });
+  saveSpecies(); renderSpecies();
+  document.getElementById('modal-overlay').classList.remove('show');
+});
+document.getElementById('modal-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal-overlay'))
+    document.getElementById('modal-overlay').classList.remove('show');
+});
+
+// ── ACCORDION ──
+document.getElementById('species-acc-header').addEventListener('click', () => {
+  document.getElementById('species-acc-header').classList.toggle('open');
+  document.getElementById('species-acc-body').classList.toggle('open');
+});
+
+// Initial render and load data
+renderSpecies();
+loadOceanData();
+</script>
+</body>
+</html>
