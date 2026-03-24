@@ -14,14 +14,16 @@ PASSWORD = os.environ.get("COPERNICUSMARINE_PASSWORD")
 if not USERNAME or not PASSWORD:
     raise ValueError("Missing Copernicus credentials in environment")
 
-# إحداثيات البيانات الفعلية (من رسالة الخطأ)
+# إحداثيات البيانات الفعلية
 LAT_MIN, LAT_MAX = 30.1875, 45.979
 LON_MIN, LON_MAX = -6.0, 36.0
 
-# الأعماق المتاحة تبدأ من ~1 متر
-MIN_DEPTH = 1.0
+# العمق الأدنى المتاح في البيانات هو 1.018 متر، نضع 1.02 ليكون ضمن النطاق
+MIN_DEPTH = 1.02
 MAX_DEPTH = 100.0
-DEPTHS = [1, 10, 20, 30, 50, 75, 100]   # أقرب الأعماق المتاحة
+
+# الأعماق التي سنحسب عندها التارموكلاين (نقربها لأقرب عمق متاح لاحقاً)
+DEPTHS = [MIN_DEPTH, 10, 20, 30, 50, 75, MAX_DEPTH]
 
 today = datetime.utcnow().date()
 yesterday = today - timedelta(days=1)
@@ -31,7 +33,7 @@ end_date = yesterday.isoformat()
 print(f"Fetching data for {yesterday}")
 
 # =====================================================
-# 2. جلب درجة حرارة السطح (أقرب عمق = 1)
+# 2. جلب درجة حرارة السطح (أقرب عمق = MIN_DEPTH)
 # =====================================================
 temp_surf_path = subset(
     dataset_id="cmems_mod_med_phy-tem_anfc_4.2km_P1D-m",
@@ -50,7 +52,7 @@ else:
     ds_temp_surf = xr.open_dataset(temp_surf_path, engine='netcdf4')
 
 # =====================================================
-# 3. جلب الملوحة (أقرب عمق = 1)
+# 3. جلب الملوحة (أقرب عمق = MIN_DEPTH)
 # =====================================================
 salinity_path = subset(
     dataset_id="cmems_mod_med_phy-sal_anfc_4.2km_P1D-m",
@@ -69,7 +71,7 @@ else:
     ds_sal = xr.open_dataset(salinity_path, engine='netcdf4')
 
 # =====================================================
-# 4. جلب التيارات (أقرب عمق = 1)
+# 4. جلب التيارات (أقرب عمق = MIN_DEPTH)
 # =====================================================
 current_path = subset(
     dataset_id="cmems_mod_med_phy-cur_anfc_4.2km_P1D-m",
@@ -88,7 +90,7 @@ else:
     ds_cur = xr.open_dataset(current_path, engine='netcdf4')
 
 # =====================================================
-# 5. جلب الكلوروفيل والأكسجين (أقرب عمق = 1)
+# 5. جلب الكلوروفيل والأكسجين (أقرب عمق = MIN_DEPTH)
 # =====================================================
 bgc_bio_path = subset(
     dataset_id="cmems_mod_med_bgc-bio_anfc_4.2km_P1D-m",
@@ -107,7 +109,7 @@ else:
     ds_bio = xr.open_dataset(bgc_bio_path, engine='netcdf4')
 
 # =====================================================
-# 6. جلب الشفافية (kd490) (أقرب عمق = 1)
+# 6. جلب الشفافية (kd490) (أقرب عمق = MIN_DEPTH)
 # =====================================================
 optics_path = subset(
     dataset_id="cmems_mod_med_bgc-optics_anfc_4.2km_P1D-m",
@@ -134,7 +136,7 @@ temp_profile_path = subset(
     minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
     minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
     start_datetime=start_date, end_datetime=end_date,
-    minimum_depth=min(DEPTHS), maximum_depth=max(DEPTHS),
+    minimum_depth=MIN_DEPTH, maximum_depth=MAX_DEPTH,
     username=USERNAME, password=PASSWORD
 )
 if temp_profile_path is None:
@@ -171,10 +173,10 @@ for i, lat in enumerate(lats):
         kd490 = float(kd490) if not np.isnan(kd490) else np.nan
 
         # حساب التارموكلاين
+        depth_vals = ds_temp_prof.depth.values
         temp_profile = []
         for d in DEPTHS:
             # نجد أقرب عمق متاح
-            depth_vals = ds_temp_prof.depth.values
             depth_idx = np.argmin(np.abs(depth_vals - d))
             t = ds_temp_prof.thetao.isel(time=0, latitude=i, longitude=j, depth=depth_idx).values
             t = float(t) if not np.isnan(t) else np.nan
