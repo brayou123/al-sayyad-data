@@ -110,7 +110,7 @@ print(f"  Downloaded profile.nc ({os.path.getsize(profile_path)} bytes)")
 ds_prof = xr.open_dataset(profile_path, engine='netcdf4')
 
 # =====================================================
-# دمج البيانات السطحية (مع محاذاة الإحداثيات)
+# دمج البيانات السطحية
 # =====================================================
 print("Aligning and merging surface datasets...")
 datasets = [
@@ -121,19 +121,15 @@ datasets = [
     ds_o2.squeeze(),
     ds_kd.squeeze()
 ]
-
-# محاذاة جميع المجموعات لتشترك في نفس الإحداثيات (join='inner')
 aligned = xr.align(*datasets, join='inner')
 ds_surf = xr.merge(aligned)
-
-# إزالة أي بُعد time إذا كان موجوداً (قد يكون هناك بعد time واحد)
 if 'time' in ds_surf.dims:
     ds_surf = ds_surf.isel(time=0, drop=True)
 elif 'time' in ds_surf.coords:
     ds_surf = ds_surf.drop_vars('time')
 
 # =====================================================
-# حساب التارموكلاين (باستخدام sel بدلاً من isel)
+# حساب التارموكلاين
 # =====================================================
 print("Computing thermocline...")
 lats = ds_surf.latitude.values
@@ -144,10 +140,7 @@ thermocline_map = np.full((len(lats), len(lons)), np.nan)
 
 for i, lat in enumerate(lats):
     for j, lon in enumerate(lons):
-        # استخراج ملف درجة الحرارة على الأعماق لأقرب نقطة
-        point_profile = ds_prof.sel(
-            latitude=lat, longitude=lon, method='nearest'
-        )
+        point_profile = ds_prof.sel(latitude=lat, longitude=lon, method='nearest')
         temp_profile = point_profile.thetao.isel(time=0).values
         depths_clean = []
         temps_clean = []
@@ -168,54 +161,80 @@ for i, lat in enumerate(lats):
         thermocline_map[i, j] = thermo_depth
 
 # =====================================================
-# بناء قائمة النقاط (بدون استخدام time)
+# بناء البيانات العمودية (columnar)
 # =====================================================
-points = []
+print("Building columnar data...")
+# قوائم فارغة
+lat_list = []
+lon_list = []
+temp_list = []
+sal_list = []
+chl_list = []
+o2_list = []
+kd_list = []
+curr_list = []
+thermo_list = []
+
 for i, lat in enumerate(lats):
     for j, lon in enumerate(lons):
-        # استخراج القيم باستخدام isel(latitude=i, longitude=j) مباشرة
-        # ds_surf ليس له بُعد time بعد التعديل
         temp_val = ds_surf.thetao.isel(latitude=i, longitude=j).values
         if np.isnan(temp_val):
             continue
 
-        temp = float(temp_val)
-        sal = float(ds_surf.so.isel(latitude=i, longitude=j).values)
-        u = float(ds_surf.uo.isel(latitude=i, longitude=j).values)
-        v = float(ds_surf.vo.isel(latitude=i, longitude=j).values)
-        current_speed = np.sqrt(u**2 + v**2)
+        # إضافة الإحداثيات
+        lat_list.append(round(float(lat), 6))
+        lon_list.append(round(float(lon), 6))
 
-        chl = ds_surf.chl.isel(latitude=i, longitude=j).values
-        chl = float(chl) if not np.isnan(chl) else np.nan
-        o2 = ds_surf.o2.isel(latitude=i, longitude=j).values
-        o2 = float(o2) if not np.isnan(o2) else np.nan
-        kd = ds_surf.kd490.isel(latitude=i, longitude=j).values
-        kd = float(kd) if not np.isnan(kd) else np.nan
+        # درجة الحرارة
+        temp_list.append(round(float(temp_val), 2))
 
-        points.append({
-            "lat": float(lat),
-            "lon": float(lon),
-            "temperature": round(temp, 2),
-            "salinity": round(sal, 2),
-            "chlorophyll": round(chl, 4),
-            "oxygen": round(o2, 2),
-            "transparency": round(kd, 2),
-            "currentSpeed": round(current_speed, 3),
-            "thermocline": round(float(thermocline_map[i, j]), 1)
-        })
+        # الملوحة
+        sal_val = ds_surf.so.isel(latitude=i, longitude=j).values
+        sal_list.append(round(float(sal_val), 2) if not np.isnan(sal_val) else None)
 
-print(f"Processed {len(points)} ocean points")
+        # التيارات
+        u_val = ds_surf.uo.isel(latitude=i, longitude=j).values
+        v_val = ds_surf.vo.isel(latitude=i, longitude=j).values
+        if not np.isnan(u_val) and not np.isnan(v_val):
+            curr_speed = round(float(np.sqrt(u_val**2 + v_val**2)), 3)
+        else:
+            curr_speed = None
+        curr_list.append(curr_speed)
+
+        # كلوروفيل
+        chl_val = ds_surf.chl.isel(latitude=i, longitude=j).values
+        chl_list.append(round(float(chl_val), 4) if not np.isnan(chl_val) else None)
+
+        # أكسجين
+        o2_val = ds_surf.o2.isel(latitude=i, longitude=j).values
+        o2_list.append(round(float(o2_val), 2) if not np.isnan(o2_val) else None)
+
+        # شفافية
+        kd_val = ds_surf.kd490.isel(latitude=i, longitude=j).values
+        kd_list.append(round(float(kd_val), 2) if not np.isnan(kd_val) else None)
+
+        # تارموكلاين
+        thermo_list.append(round(float(thermocline_map[i, j]), 1))
 
 # =====================================================
-# حفظ data.json
+# حفظ data.json بالصيغة العمودية
 # =====================================================
 output = {
     "timestamp": yesterday,
     "resolution_km": 4.2,
-    "points": points
+    "lat": lat_list,
+    "lon": lon_list,
+    "temperature": temp_list,
+    "salinity": sal_list,
+    "chlorophyll": chl_list,
+    "oxygen": o2_list,
+    "transparency": kd_list,
+    "currentSpeed": curr_list,
+    "thermocline": thermo_list
 }
 
 with open("data.json", "w", encoding="utf-8") as f:
     json.dump(output, f, separators=(',', ':'), ensure_ascii=False)
 
+print(f"Saved {len(lat_list)} points in columnar format")
 print("data.json saved successfully")
