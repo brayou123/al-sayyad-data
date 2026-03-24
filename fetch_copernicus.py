@@ -110,14 +110,22 @@ print(f"  Downloaded profile.nc ({os.path.getsize(profile_path)} bytes)")
 ds_prof = xr.open_dataset(profile_path, engine='netcdf4')
 
 # =====================================================
-# دمج البيانات السطحية
+# دمج البيانات السطحية (مع محاذاة الإحداثيات)
 # =====================================================
-print("Merging surface datasets...")
-ds_surf = xr.merge(
-    [ds_temp.squeeze(), ds_sal.squeeze(), ds_cur.squeeze(),
-     ds_chl.squeeze(), ds_o2.squeeze(), ds_kd.squeeze()],
-    join='exact', compat='override'  # لتجنب التحذيرات
-)
+print("Aligning and merging surface datasets...")
+datasets = [
+    ds_temp.squeeze(),
+    ds_sal.squeeze(),
+    ds_cur.squeeze(),
+    ds_chl.squeeze(),
+    ds_o2.squeeze(),
+    ds_kd.squeeze()
+]
+
+# محاذاة جميع المجموعات لتشترك في نفس الإحداثيات (join='inner')
+aligned = xr.align(*datasets, join='inner')
+# ثم الدمج
+ds_surf = xr.merge(aligned)
 
 # =====================================================
 # حساب التارموكلاين (باستخدام sel بدلاً من isel)
@@ -132,12 +140,10 @@ thermocline_map = np.full((len(lats), len(lons)), np.nan)
 for i, lat in enumerate(lats):
     for j, lon in enumerate(lons):
         # استخراج ملف درجة الحرارة على الأعماق لأقرب نقطة
-        # نستخدم sel مع أقرب خلية (method='nearest')
         point_profile = ds_prof.sel(
             latitude=lat, longitude=lon, method='nearest'
         )
         temp_profile = point_profile.thetao.isel(time=0).values
-        # ازالة القيم المفقودة
         depths_clean = []
         temps_clean = []
         for d_idx, t in enumerate(temp_profile):
