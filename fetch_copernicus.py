@@ -4,10 +4,10 @@ import json
 import numpy as np
 import xarray as xr
 from datetime import datetime, timedelta
-from copernicusmarine import subset
+from copernicusmarine import subset, describe
 
 # =====================================================
-# المصادقة
+# 1. المصادقة
 # =====================================================
 USERNAME = os.environ.get("COPERNICUSMARINE_USERNAME")
 PASSWORD = os.environ.get("COPERNICUSMARINE_PASSWORD")
@@ -15,209 +15,176 @@ if not USERNAME or not PASSWORD:
     raise ValueError("Missing Copernicus credentials")
 
 # =====================================================
-# إحداثيات البيانات الفعلية (من رسائل الخطأ)
+# 2. تحديد الإحداثيات الصحيحة باستخدام describe
 # =====================================================
-LAT_MIN = 30.1875
-LAT_MAX = 45.97916793823242
-LON_MIN = -6.0
-LON_MAX = 36.0
+print("Retrieving actual dataset coordinates...")
+describe_result = describe(
+    dataset_ids=["cmems_mod_med_phy-tem_anfc_4.2km_P1D-m"],
+    username=USERNAME, password=PASSWORD
+)
+# استخراج حدود خطوط الطول والعرض من الوصف
+# نأخذ القيم من أول مجموعة بيانات في النتيجة
+ds_meta = describe_result[0].datasets[0]
+lon_min = ds_meta.geographic_coverage.west_boundary
+lon_max = ds_meta.geographic_coverage.east_boundary
+lat_min = ds_meta.geographic_coverage.south_boundary
+lat_max = ds_meta.geographic_coverage.north_boundary
+print(f"Dataset coordinates: lat [{lat_min}, {lat_max}], lon [{lon_min}, {lon_max}]")
 
-# العمق السطحي المتاح هو 1.018 متر (أقرب عمق لـ 0)
-DEPTH_SURFACE = 1.018
-# نطاق الأعماق لملف التعريف (حتى 100 متر)
-DEPTH_MIN = DEPTH_SURFACE
-DEPTH_MAX = 100.0
-
+# =====================================================
+# 3. معلمات الوقت
+# =====================================================
 today = datetime.utcnow().date()
 yesterday = today - timedelta(days=1)
 start_date = yesterday.isoformat()
 end_date = yesterday.isoformat()
-
 print(f"Fetching data for {yesterday}")
-print(f"Latitude bounds: {LAT_MIN} - {LAT_MAX}")
-print(f"Longitude bounds: {LON_MIN} - {LON_MAX}")
-print(f"Depth (surface): {DEPTH_SURFACE} m")
 
 # =====================================================
-# 1. درجة الحرارة السطحية
+# 4. دالة مساعدة لتحميل ملف وفتحه
 # =====================================================
-print("Downloading sea surface temperature...")
-temp_file = "med_thetao.nc"
-subset(
+def download_and_open(dataset_id, variables, filename, depth_min=0.0, depth_max=0.0):
+    print(f"Downloading {variables} from {dataset_id}...")
+    path = subset(
+        dataset_id=dataset_id,
+        variables=variables,
+        minimum_longitude=lon_min, maximum_longitude=lon_max,
+        minimum_latitude=lat_min, maximum_latitude=lat_max,
+        start_datetime=start_date, end_datetime=end_date,
+        minimum_depth=depth_min, maximum_depth=depth_max,
+        username=USERNAME, password=PASSWORD,
+        output_filename=filename
+    )
+    # path should be a string (the filename)
+    return xr.open_dataset(path)
+
+# =====================================================
+# 5. تحميل البيانات السطحية
+# =====================================================
+ds_temp = download_and_open(
+    "cmems_mod_med_phy-tem_anfc_4.2km_P1D-m", ["thetao"], "temp.nc"
+)
+ds_sal = download_and_open(
+    "cmems_mod_med_phy-sal_anfc_4.2km_P1D-m", ["so"], "sal.nc"
+)
+ds_cur = download_and_open(
+    "cmems_mod_med_phy-cur_anfc_4.2km_P1D-m", ["uo", "vo"], "cur.nc"
+)
+ds_chl = download_and_open(
+    "cmems_mod_med_bgc-pft_anfc_4.2km_P1D-m", ["chl"], "chl.nc"
+)
+ds_o2 = download_and_open(
+    "cmems_mod_med_bgc-bio_anfc_4.2km_P1D-m", ["o2"], "o2.nc"
+)
+ds_kd = download_and_open(
+    "cmems_mod_med_bgc-optics_anfc_4.2km_P1D-m", ["kd490"], "kd490.nc"
+)
+
+# =====================================================
+# 6. تحميل ملف تعريف درجة الحرارة (أعماق متعددة)
+# =====================================================
+print("Downloading temperature profile (0-100m)...")
+profile_path = subset(
     dataset_id="cmems_mod_med_phy-tem_anfc_4.2km_P1D-m",
     variables=["thetao"],
-    minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
-    minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
+    minimum_longitude=lon_min, maximum_longitude=lon_max,
+    minimum_latitude=lat_min, maximum_latitude=lat_max,
     start_datetime=start_date, end_datetime=end_date,
-    minimum_depth=DEPTH_SURFACE, maximum_depth=DEPTH_SURFACE,
+    minimum_depth=0.0, maximum_depth=100.0,
     username=USERNAME, password=PASSWORD,
-    output_filename=temp_file
+    output_filename="profile.nc"
 )
-ds_temp = xr.open_dataset(temp_file)
+ds_prof = xr.open_dataset(profile_path)
 
 # =====================================================
-# 2. الملوحة
+# 7. دمج جميع البيانات السطحية في مجموعة واحدة
 # =====================================================
-print("Downloading salinity...")
-sal_file = "med_so.nc"
-subset(
-    dataset_id="cmems_mod_med_phy-sal_anfc_4.2km_P1D-m",
-    variables=["so"],
-    minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
-    minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
-    start_datetime=start_date, end_datetime=end_date,
-    minimum_depth=DEPTH_SURFACE, maximum_depth=DEPTH_SURFACE,
-    username=USERNAME, password=PASSWORD,
-    output_filename=sal_file
-)
-ds_sal = xr.open_dataset(sal_file)
+print("Merging surface datasets...")
+# جميع البيانات السطحية تشترك في الإحداثيات (الزمن، خط العرض، خط الطول)
+# نزيل أبعاد العمق (إذا كانت موجودة) ونحتفظ فقط بالمستوى السطحي.
+# لكن بما أننا طلبنا depth_range=0.0..0.0، سيكون البعد عمقاً واحداً.
+# نستخدم .squeeze() لإزالة البعد الزائد.
+ds_surface = xr.merge([
+    ds_temp.squeeze(),
+    ds_sal.squeeze(),
+    ds_cur.squeeze(),
+    ds_chl.squeeze(),
+    ds_o2.squeeze(),
+    ds_kd.squeeze()
+])
 
 # =====================================================
-# 3. التيارات
+# 8. حساب التارموكلاين لكل نقطة
 # =====================================================
-print("Downloading currents...")
-cur_file = "med_uv.nc"
-subset(
-    dataset_id="cmems_mod_med_phy-cur_anfc_4.2km_P1D-m",
-    variables=["uo", "vo"],
-    minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
-    minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
-    start_datetime=start_date, end_datetime=end_date,
-    minimum_depth=DEPTH_SURFACE, maximum_depth=DEPTH_SURFACE,
-    username=USERNAME, password=PASSWORD,
-    output_filename=cur_file
-)
-ds_cur = xr.open_dataset(cur_file)
+print("Computing thermocline...")
+lons = ds_surface.longitude.values
+lats = ds_surface.latitude.values
+depth_vals = ds_prof.depth.values  # الأعماق المتاحة
+
+# مصفوفة لتخزين عمق التارموكلاين (نفس أبعاد lats, lons)
+thermocline_map = np.full((len(lats), len(lons)), np.nan)
+
+for i, lat in enumerate(lats):
+    for j, lon in enumerate(lons):
+        # استخرج ملف درجة الحرارة على الأعماق لهذه النقطة
+        temp_profile = ds_prof.thetao.isel(time=0, latitude=i, longitude=j).values
+        # إزالة القيم المفقودة
+        depths_clean = []
+        temps_clean = []
+        for d_idx, t in enumerate(temp_profile):
+            if not np.isnan(t):
+                depths_clean.append(depth_vals[d_idx])
+                temps_clean.append(t)
+        if len(temps_clean) < 2:
+            thermocline_map[i, j] = 35.0  # قيمة افتراضية
+            continue
+
+        # حساب أقصى تدرج حراري
+        max_grad = 0.0
+        thermo_depth = 35.0
+        for k in range(1, len(temps_clean)):
+            grad = abs(temps_clean[k] - temps_clean[k-1])
+            if grad > max_grad:
+                max_grad = grad
+                thermo_depth = (depths_clean[k] + depths_clean[k-1]) / 2
+        thermocline_map[i, j] = thermo_depth
 
 # =====================================================
-# 4. الكلوروفيل
+# 9. بناء قائمة النقاط
 # =====================================================
-print("Downloading chlorophyll...")
-chl_file = "med_chl.nc"
-subset(
-    dataset_id="cmems_mod_med_bgc-pft_anfc_4.2km_P1D-m",
-    variables=["chl"],
-    minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
-    minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
-    start_datetime=start_date, end_datetime=end_date,
-    minimum_depth=DEPTH_SURFACE, maximum_depth=DEPTH_SURFACE,
-    username=USERNAME, password=PASSWORD,
-    output_filename=chl_file
-)
-ds_chl = xr.open_dataset(chl_file)
-
-# =====================================================
-# 5. الأكسجين
-# =====================================================
-print("Downloading dissolved oxygen...")
-o2_file = "med_o2.nc"
-subset(
-    dataset_id="cmems_mod_med_bgc-bio_anfc_4.2km_P1D-m",
-    variables=["o2"],
-    minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
-    minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
-    start_datetime=start_date, end_datetime=end_date,
-    minimum_depth=DEPTH_SURFACE, maximum_depth=DEPTH_SURFACE,
-    username=USERNAME, password=PASSWORD,
-    output_filename=o2_file
-)
-ds_o2 = xr.open_dataset(o2_file)
-
-# =====================================================
-# 6. الشفافية (kd490)
-# =====================================================
-print("Downloading transparency...")
-kd_file = "med_kd490.nc"
-subset(
-    dataset_id="cmems_mod_med_bgc-optics_anfc_4.2km_P1D-m",
-    variables=["kd490"],
-    minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
-    minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
-    start_datetime=start_date, end_datetime=end_date,
-    minimum_depth=DEPTH_SURFACE, maximum_depth=DEPTH_SURFACE,
-    username=USERNAME, password=PASSWORD,
-    output_filename=kd_file
-)
-ds_kd = xr.open_dataset(kd_file)
-
-# =====================================================
-# 7. ملف تعريف درجة الحرارة (للتارموكلاين)
-# =====================================================
-print("Downloading temperature profile...")
-prof_file = "med_thetao_profile.nc"
-subset(
-    dataset_id="cmems_mod_med_phy-tem_anfc_4.2km_P1D-m",
-    variables=["thetao"],
-    minimum_longitude=LON_MIN, maximum_longitude=LON_MAX,
-    minimum_latitude=LAT_MIN, maximum_latitude=LAT_MAX,
-    start_datetime=start_date, end_datetime=end_date,
-    minimum_depth=DEPTH_MIN, maximum_depth=DEPTH_MAX,
-    username=USERNAME, password=PASSWORD,
-    output_filename=prof_file
-)
-ds_prof = xr.open_dataset(prof_file)
-
-# =====================================================
-# 8. استخراج الإحداثيات وإنشاء النقاط
-# =====================================================
-lons = ds_temp.longitude.values
-lats = ds_temp.latitude.values
-depth_vals = ds_prof.depth.values  # أعماق الملف التعريفي
-
+print("Building points list...")
 points = []
 for i, lat in enumerate(lats):
     for j, lon in enumerate(lons):
-        temp_surf = ds_temp.thetao.isel(time=0, latitude=i, longitude=j).values
-        if np.isnan(temp_surf):
+        # نتحقق من وجود درجة حرارة صالحة (مؤشر على بحر)
+        temp_val = ds_surface.thetao.isel(time=0, latitude=i, longitude=j).values
+        if np.isnan(temp_val):
             continue
 
-        temp_val = float(temp_surf)
-        sal_val = float(ds_sal.so.isel(time=0, latitude=i, longitude=j).values)
-        u_val = float(ds_cur.uo.isel(time=0, latitude=i, longitude=j).values)
-        v_val = float(ds_cur.vo.isel(time=0, latitude=i, longitude=j).values)
+        sal_val = ds_surface.so.isel(time=0, latitude=i, longitude=j).values
+        u_val = ds_surface.uo.isel(time=0, latitude=i, longitude=j).values
+        v_val = ds_surface.vo.isel(time=0, latitude=i, longitude=j).values
         current_speed = np.sqrt(u_val**2 + v_val**2)
-
-        chl_val = ds_chl.chl.isel(time=0, latitude=i, longitude=j).values
-        chl_val = float(chl_val) if not np.isnan(chl_val) else np.nan
-        o2_val = ds_o2.o2.isel(time=0, latitude=i, longitude=j).values
-        o2_val = float(o2_val) if not np.isnan(o2_val) else np.nan
-        kd_val = ds_kd.kd490.isel(time=0, latitude=i, longitude=j).values
-        kd_val = float(kd_val) if not np.isnan(kd_val) else np.nan
-
-        # حساب التارموكلاين
-        temp_profile = []
-        for depth_idx in range(len(depth_vals)):
-            t = ds_prof.thetao.isel(time=0, depth=depth_idx, latitude=i, longitude=j).values
-            if not np.isnan(t):
-                temp_profile.append(float(t))
-            else:
-                temp_profile.append(np.nan)
-
-        max_grad = 0.0
-        thermocline_depth = 35.0
-        for k in range(1, len(temp_profile)):
-            if not np.isnan(temp_profile[k]) and not np.isnan(temp_profile[k-1]):
-                grad = abs(temp_profile[k] - temp_profile[k-1])
-                if grad > max_grad:
-                    max_grad = grad
-                    thermocline_depth = (depth_vals[k] + depth_vals[k-1]) / 2
+        chl_val = ds_surface.chl.isel(time=0, latitude=i, longitude=j).values
+        o2_val = ds_surface.o2.isel(time=0, latitude=i, longitude=j).values
+        kd_val = ds_surface.kd490.isel(time=0, latitude=i, longitude=j).values
 
         points.append({
             "lat": float(lat),
             "lon": float(lon),
-            "temperature": round(temp_val, 2),
-            "salinity": round(sal_val, 2),
-            "chlorophyll": round(chl_val, 4),
-            "oxygen": round(o2_val, 2),
-            "transparency": round(kd_val, 2),
-            "currentSpeed": round(current_speed, 3),
-            "thermocline": round(thermocline_depth, 1)
+            "temperature": round(float(temp_val), 2),
+            "salinity": round(float(sal_val), 2),
+            "chlorophyll": round(float(chl_val) if not np.isnan(chl_val) else np.nan, 4),
+            "oxygen": round(float(o2_val) if not np.isnan(o2_val) else np.nan, 2),
+            "transparency": round(float(kd_val) if not np.isnan(kd_val) else np.nan, 2),
+            "currentSpeed": round(float(current_speed), 3),
+            "thermocline": round(float(thermocline_map[i, j]), 1)
         })
 
 print(f"Processed {len(points)} ocean points")
 
 # =====================================================
-# 9. حفظ data.json
+# 10. حفظ data.json
 # =====================================================
 output = {
     "timestamp": yesterday.isoformat(),
