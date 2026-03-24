@@ -14,6 +14,13 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install copernicusmarine xarray netCDF4 numpy h5py
+      - name: Debug credentials (check if secrets are available)
+        run: |
+          echo "Username length: ${#COPERNICUSMARINE_USERNAME}"
+          if [ -z "$COPERNICUSMARINE_USERNAME" ]; then echo "USER empty"; else echo "USER not empty"; fi
+        env:
+          COPERNICUSMARINE_USERNAME: ${{ secrets.COPERNICUS_USER }}
+          COPERNICUSMARINE_PASSWORD: ${{ secrets.COPERNICUS_PASS }}
       - name: Fetch and process data
         run: python fetch_copernicus.py
         env:
