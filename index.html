@@ -8,7 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=IBM+Plex+Mono:wght@400;500&family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
-  /* ... (no change) ... */
+  /* ... (نفس الـ CSS السابق، لم يتغير) ... */
   :root {
     --bg: #060d14;
     --surface: #0b1623;
@@ -364,12 +364,12 @@ const SLIDER_VARS = [
 ];
 
 const PREDEFINED = [
-  { id:'sardine', name:'سردين', sci:'Sardina pilchardus', color:'#00aaff',
-    ranges:{ temperature:[13,20], chlorophyll:[0.5,4.0], oxygen:[5.5,8.5], salinity:[36,38.5], transparency:[5,25], currentSpeed:[0,1.0] } },
-  { id:'anchovy', name:'أنشوجة', sci:'Engraulis encrasicolus', color:'#ff4455',
-    ranges:{ temperature:[14,23], chlorophyll:[1.0,5.0], oxygen:[5.0,8.0], salinity:[36,38.5], transparency:[5,20], currentSpeed:[0,1.5] } },
-  { id:'lacha',   name:'لاشا',   sci:'Sardinella aurita', color:'#22cc77',
-    ranges:{ temperature:[20,27], chlorophyll:[0.3,2.5], oxygen:[4.5,8.0], salinity:[36,39],   transparency:[3,18], currentSpeed:[0,2.0] } }
+  { id:'sardine', name:'Sardine', sci:'Sardina pilchardus',     color:'#00aaff',
+    ranges:{ temperature:[13,20], chlorophyll:[0.5,4.0], oxygen:[5.5,8.5], salinity:[36,38.5], transparency:[5,25],  currentSpeed:[0,1.0] } },
+  { id:'anchovy', name:'Anchovy', sci:'Engraulis encrasicolus', color:'#ff4455',
+    ranges:{ temperature:[14,23], chlorophyll:[1.0,5.0], oxygen:[5.0,8.0], salinity:[36,38.5], transparency:[5,20],  currentSpeed:[0,1.5] } },
+  { id:'lacha',   name:'Lacha',   sci:'Sardinella aurita',      color:'#22cc77',
+    ranges:{ temperature:[20,27], chlorophyll:[0.3,2.5], oxygen:[4.5,8.0], salinity:[36,39],   transparency:[3,18],  currentSpeed:[0,2.0] } }
 ];
 
 const COLOR_PALETTE = ['#00aaff','#ff4455','#22cc77','#ffaa00','#cc44ff','#ff6600','#00ffcc','#ff44aa','#00eebb','#44aaff'];
@@ -445,10 +445,8 @@ async function loadOceanData() {
 }
 
 // ══════════════════════════════════════════════════════
-//  SPECIES MATCHING — أوزان بيولوجية + كشف الجبهات
+//  SPECIES MATCHING — أوزان بيولوجية
 // ══════════════════════════════════════════════════════
-
-// الأوزان البيولوجية لكل متغير (المجموع = 1)
 const VAR_WEIGHTS = {
   temperature:  0.30,
   chlorophyll:  0.25,
@@ -458,58 +456,44 @@ const VAR_WEIGHTS = {
   currentSpeed: 0.07
 };
 
-const VAR_META = [
-  { key:'temperature',  label:'🌡️ درجة الحرارة',   unit:'°C'    },
-  { key:'chlorophyll',  label:'🟢 كلوروفيل',        unit:'mg/m³' },
-  { key:'oxygen',       label:'💧 أكسجين ذائب',     unit:'ml/l'  },
-  { key:'salinity',     label:'🧂 الملوحة',          unit:'ppt'   },
-  { key:'transparency', label:'👁️ الشفافية (Secchi)', unit:'m'     },
-  { key:'currentSpeed', label:'🌊 سرعة التيار',      unit:'kn'    },
-  { key:'thermocline',  label:'📏 التارموكلاين',     unit:'m'     }
-];
-
 function matchSpecies(point, ranges) {
   const varList = [
-    { key:'temperature',  weight: VAR_WEIGHTS.temperature  },
-    { key:'chlorophyll',  weight: VAR_WEIGHTS.chlorophyll  },
-    { key:'oxygen',       weight: VAR_WEIGHTS.oxygen       },
-    { key:'salinity',     weight: VAR_WEIGHTS.salinity     },
-    { key:'transparency', weight: VAR_WEIGHTS.transparency },
-    { key:'currentSpeed', weight: VAR_WEIGHTS.currentSpeed }
+    { key:'temperature',  label:'Temperature'   },
+    { key:'chlorophyll',  label:'Chlorophyll'   },
+    { key:'oxygen',       label:'Dissolved O₂'  },
+    { key:'salinity',     label:'Salinity'      },
+    { key:'transparency', label:'Transparency'  },
+    { key:'currentSpeed', label:'Current Speed' }
   ];
-
   let weightedScore = 0;
   let totalWeight   = 0;
   const matched = [];
-
   for (const v of varList) {
+    const w     = VAR_WEIGHTS[v.key];
     const range = ranges[v.key];
-    if (!range) { weightedScore += v.weight; totalWeight += v.weight; continue; }
+    totalWeight += w;
+    if (!range) { weightedScore += w; continue; }
     const [lo, hi] = range;
     const val = point[v.key];
-    totalWeight += v.weight;
-    if (val == null) { weightedScore += v.weight * 0.5; continue; }
+    if (val == null) { weightedScore += w * 0.5; continue; }
     if (val >= lo && val <= hi) {
-      weightedScore += v.weight;
-      matched.push(v.key);
+      weightedScore += w;
+      matched.push(v.label);
     } else {
       const margin = (hi - lo) * 0.25 || 1;
-      const partial = Math.max(0, 1 - (val < lo ? lo - val : val - hi) / margin);
-      weightedScore += v.weight * partial;
+      weightedScore += w * Math.max(0, 1 - (val < lo ? lo - val : val - hi) / margin);
     }
   }
-
-  // التارموكلاين — عامل تعديل
   const td = point.thermocline != null ? point.thermocline : 35;
   const thermoFactor = (td >= 15 && td <= 80) ? 1.08 : 0.88;
-
   const score = Math.min(1, (weightedScore / totalWeight) * thermoFactor);
   return { score, matchedVars: matched };
 }
 
-// حساب تدرج درجة الحرارة للجبهات البيئية
+// ══════════════════════════════════════════════════════
+//  FRONT DETECTION — كشف الجبهات البيئية
+// ══════════════════════════════════════════════════════
 function computeFrontBonus(point, allPoints) {
-  // نبحث عن النقاط المجاورة في نطاق ~12km (3 نقاط بدقة 4.2km)
   const neighbors = allPoints.filter(p =>
     p !== point &&
     Math.abs(p.lat - point.lat) < 0.12 &&
@@ -518,29 +502,91 @@ function computeFrontBonus(point, allPoints) {
   );
   if (neighbors.length < 2 || point.temperature == null) return 1.0;
   const temps = neighbors.map(p => p.temperature);
-  const maxT = Math.max(...temps);
-  const minT = Math.min(...temps);
-  const gradient = maxT - minT; // °C عبر ~12km
-  // جبهة قوية > 0.8°C/12km → bonus حتى +12%
+  const gradient = Math.max(...temps) - Math.min(...temps);
   if (gradient > 1.2) return 1.12;
   if (gradient > 0.8) return 1.07;
   if (gradient > 0.4) return 1.03;
   return 1.0;
 }
 
+// ══════════════════════════════════════════════════════
+//  CLUSTERING — دمج النقاط في مناطق صيد
+// ══════════════════════════════════════════════════════
+function clusterHotspots(rawPoints) {
+  const CLUSTER_RADIUS_KM = 15; // دمج النقاط ضمن 15km
+  const used = new Array(rawPoints.length).fill(false);
+  const clusters = [];
+
+  for (let i = 0; i < rawPoints.length; i++) {
+    if (used[i]) continue;
+    const seed = rawPoints[i];
+    const members = [seed];
+    used[i] = true;
+
+    for (let j = i + 1; j < rawPoints.length; j++) {
+      if (used[j]) continue;
+      if (haversineKm(seed.lat, seed.lon, rawPoints[j].lat, rawPoints[j].lon) <= CLUSTER_RADIUS_KM) {
+        members.push(rawPoints[j]);
+        used[j] = true;
+      }
+    }
+
+    // مركز الثقل
+    const avgLat  = members.reduce((s, p) => s + p.lat, 0) / members.length;
+    const avgLon  = members.reduce((s, p) => s + p.lon, 0) / members.length;
+    const avgMatch = members.reduce((s, p) => s + p.match, 0) / members.length;
+    const best = members.reduce((a, b) => b.match > a.match ? b : a);
+
+    // حساب نصف القطر التقريبي للمنطقة
+    const radiusKm = members.length === 1 ? 8 :
+      Math.max(...members.map(p => haversineKm(avgLat, avgLon, p.lat, p.lon))) + 6;
+
+    // جمع كل الأنواع الموجودة في الـ cluster
+    const speciesMap = {};
+    members.forEach(p => {
+      (p.allSpecies || [{ name: p.name, color: p.color, match: p.match }]).forEach(sp => {
+        if (!speciesMap[sp.name] || sp.match > speciesMap[sp.name].match) {
+          speciesMap[sp.name] = sp;
+        }
+      });
+    });
+    const allSpecies = Object.values(speciesMap).sort((a, b) => b.match - a.match);
+
+    clusters.push({
+      lat:        avgLat,
+      lon:        avgLon,
+      match:      +avgMatch.toFixed(1),
+      radiusKm:   +radiusKm.toFixed(1),
+      count:      members.length,
+      color:      best.color,
+      name:       best.name,
+      allSpecies,
+      isFront:    members.some(p => p.isFront),
+      pointData:  best.pointData
+    });
+  }
+
+  clusters.sort((a, b) => b.match - a.match);
+  return clusters;
+}
+
+// ══════════════════════════════════════════════════════
+//  SEARCH
+// ══════════════════════════════════════════════════════
 function searchHotspots(selectedSpecies) {
   if (!oceanData || !oceanData.points) throw new Error('Ocean data not loaded');
-  const radiusKm = 100;
+  const radiusKm  = 100;
   const pointsInRange = oceanData.points.filter(p =>
     haversineKm(userLat, userLon, p.lat, p.lon) <= radiusKm
   );
 
-  const hotspots = [];
+  const rawHotspots = [];
 
   for (const point of pointsInRange) {
-    const frontBonus = computeFrontBonus(point, pointsInRange);
+    const frontBonus  = computeFrontBonus(point, pointsInRange);
     const speciesMatches = [];
 
+    // ← لا break — نقيّم كل الأنواع
     for (const sp of selectedSpecies) {
       const { score, matchedVars } = matchSpecies(point, sp.ranges);
       const finalScore = Math.min(1, score * frontBonus);
@@ -554,26 +600,24 @@ function searchHotspots(selectedSpecies) {
       }
     }
 
-    if (speciesMatches.length > 0) {
-      // ترتيب حسب الأفضل
-      speciesMatches.sort((a, b) => b.match - a.match);
-      const best = speciesMatches[0];
-      hotspots.push({
-        lat:     point.lat,
-        lon:     point.lon,
-        match:   best.match,
-        color:   best.color,
-        name:    best.name,
-        vars:    best.vars,
-        allSpecies: speciesMatches,   // كل الأنواع المطابقة
-        isFront: frontBonus > 1.03,   // علامة الجبهة
-        pointData: point              // القيم الفعلية الكاملة
-      });
-    }
+    if (speciesMatches.length === 0) continue;
+    speciesMatches.sort((a, b) => b.match - a.match);
+    const best = speciesMatches[0];
+
+    rawHotspots.push({
+      lat:        point.lat,
+      lon:        point.lon,
+      match:      best.match,
+      color:      best.color,
+      name:       best.name,
+      allSpecies: speciesMatches,
+      isFront:    frontBonus > 1.03,
+      pointData:  point
+    });
   }
 
-  hotspots.sort((a, b) => b.match - a.match);
-  return hotspots;
+  // دمج النقاط في مناطق
+  return clusterHotspots(rawHotspots);
 }
 
 // ══════════════════════════════════════════════════════
@@ -620,39 +664,73 @@ function drawHotspots() {
   cancelAnimationFrame(animFrame);
   ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
   if (!hotspotResults.length) return;
+
   function loop() {
     ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
-    phase += 0.022;
-    hotspotResults.forEach(h => {
-      const pt = map.latLngToContainerPoint([h.lat, h.lon]);
-      const pulse = 0.6 + 0.4 * Math.sin(phase + h.lat * 8 + h.lon * 5);
+    phase += 0.018;
 
-      // إذا كانت جبهة بيئية → دائرة خارجية بيضاء/صفراء
+    hotspotResults.forEach(h => {
+      const center = map.latLngToContainerPoint([h.lat, h.lon]);
+
+      // حساب حجم الدائرة بناءً على radiusKm الفعلي على الخريطة
+      const edgePt  = map.latLngToContainerPoint([
+        h.lat, h.lon + (h.radiusKm / 111) * (1 / Math.cos(h.lat * Math.PI / 180))
+      ]);
+      const pxRadius = Math.max(18, Math.hypot(edgePt.x - center.x, edgePt.y - center.y));
+
+      const pulse = 0.75 + 0.25 * Math.sin(phase + h.lat * 6 + h.lon * 4);
+      const species = h.allSpecies || [{ color: h.color, match: h.match }];
+
+      // طبقة خارجية لكل نوع (حلقات بألوان مختلفة)
+      species.forEach((sp, idx) => {
+        const ringR = pxRadius * (1 - idx * 0.18);
+        if (ringR < 8) return;
+        const alpha = (0.12 - idx * 0.03) * pulse;
+        const grad = ctx.createRadialGradient(center.x, center.y, ringR * 0.3, center.x, center.y, ringR);
+        grad.addColorStop(0,   hexA(sp.color, alpha * 2.5));
+        grad.addColorStop(0.6, hexA(sp.color, alpha));
+        grad.addColorStop(1,   hexA(sp.color, 0));
+        ctx.beginPath();
+        ctx.arc(center.x, center.y, ringR, 0, Math.PI * 2);
+        ctx.fillStyle = grad;
+        ctx.fill();
+      });
+
+      // حدود المنطقة — خط دائري
+      ctx.beginPath();
+      ctx.arc(center.x, center.y, pxRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = hexA(h.color, 0.35 * pulse);
+      ctx.lineWidth   = h.isFront ? 2 : 1;
+      ctx.setLineDash(h.isFront ? [] : [5, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // مؤشر الجبهة — هالة ذهبية
       if (h.isFront) {
         ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 18 + 4 * pulse, 0, Math.PI * 2);
-        ctx.strokeStyle = hexA('#ffdd00', 0.5 * pulse);
-        ctx.lineWidth = 1.5;
+        ctx.arc(center.x, center.y, pxRadius + 5 * pulse, 0, Math.PI * 2);
+        ctx.strokeStyle = hexA('#ffdd00', 0.45 * pulse);
+        ctx.lineWidth   = 1.5;
         ctx.stroke();
       }
 
-      // إذا كان أكثر من نوع → ارسم دوائر متداخلة بألوان مختلفة
-      const species = h.allSpecies || [{ color: h.color, match: h.match }];
-      species.forEach((sp, idx) => {
-        const rBase = 11 + 9 * pulse - idx * 3;
-        if (rBase <= 2) return;
-        const grad = ctx.createRadialGradient(pt.x, pt.y, 0, pt.x, pt.y, rBase * 2.8);
-        grad.addColorStop(0,    hexA(sp.color, (0.6 - idx * 0.15) * pulse));
-        grad.addColorStop(0.45, hexA(sp.color, (0.18 - idx * 0.05) * pulse));
-        grad.addColorStop(1,    hexA(sp.color, 0));
-        ctx.beginPath(); ctx.arc(pt.x, pt.y, rBase * 2.8, 0, Math.PI*2);
-        ctx.fillStyle = grad; ctx.fill();
-      });
+      // النقطة المركزية
+      const dotR = 5 + 3 * pulse;
+      ctx.beginPath();
+      ctx.arc(center.x, center.y, dotR, 0, Math.PI * 2);
+      ctx.fillStyle   = hexA(h.color, 0.95);
+      ctx.shadowColor = h.color;
+      ctx.shadowBlur  = 14;
+      ctx.fill();
+      ctx.shadowBlur  = 0;
 
-      // النقطة المركزية — لون أفضل نوع
-      ctx.beginPath(); ctx.arc(pt.x, pt.y, (11 + 9 * pulse) * 0.42, 0, Math.PI*2);
-      ctx.fillStyle = hexA(h.color, 0.92);
-      ctx.shadowColor = h.color; ctx.shadowBlur = 12; ctx.fill(); ctx.shadowBlur = 0;
+      // نسبة المطابقة فوق النقطة
+      if (map.getZoom() >= 8) {
+        ctx.font      = 'bold 10px IBM Plex Mono, monospace';
+        ctx.fillStyle = hexA(h.color, 0.9);
+        ctx.textAlign = 'center';
+        ctx.fillText(h.match.toFixed(0) + '%', center.x, center.y - dotR - 4);
+      }
     });
     animFrame = requestAnimationFrame(loop);
   }
@@ -665,66 +743,71 @@ function drawHotspots() {
 map.getContainer().addEventListener('click', e => {
   const mx = e.clientX, my = e.clientY;
   const popup = document.getElementById('hotspot-popup');
-  let hit = null, bestD = 28;
+  let hit = null, bestD = Infinity;
+
   hotspotResults.forEach(h => {
-    const pt = map.latLngToContainerPoint([h.lat, h.lon]);
-    const d = Math.hypot(pt.x - mx, pt.y - my);
-    if (d < bestD) { bestD = d; hit = h; }
+    const center = map.latLngToContainerPoint([h.lat, h.lon]);
+    const edgePt = map.latLngToContainerPoint([
+      h.lat, h.lon + (h.radiusKm / 111) * (1 / Math.cos(h.lat * Math.PI / 180))
+    ]);
+    const pxRadius = Math.max(18, Math.hypot(edgePt.x - center.x, edgePt.y - center.y));
+    const d = Math.hypot(center.x - mx, center.y - my);
+    if (d <= pxRadius && d < bestD) { bestD = d; hit = h; }
   });
+
   if (hit) {
     popup.style.display = 'block';
     let left = mx + 16, top = my - 20;
     if (left + 250 > window.innerWidth  - 10) left = mx - 266;
-    if (top  + 220 > window.innerHeight - 80) top  = my - 230;
-    popup.style.left = left + 'px'; popup.style.top = top + 'px';
+    if (top  + 260 > window.innerHeight - 80) top  = my - 270;
+    popup.style.left = left + 'px';
+    popup.style.top  = top  + 'px';
     popup.style.borderColor = hit.color;
 
-    // العنوان — كل الأنواع المطابقة
+    // الأنواع المطابقة
     const nameEl = document.getElementById('popup-name');
-    nameEl.style.color = hit.color;
     if (hit.allSpecies && hit.allSpecies.length > 1) {
-      nameEl.innerHTML = hit.allSpecies.map(s =>
-        `<span style="color:${s.color}">${s.name} ${s.match.toFixed(0)}%</span>`
-      ).join(' · ');
+      nameEl.innerHTML = hit.allSpecies
+        .map(s => `<span style="color:${s.color}">● ${s.name} ${s.match.toFixed(0)}%</span>`)
+        .join('<br>');
     } else {
-      nameEl.textContent = hit.name;
+      nameEl.style.color  = hit.color;
+      nameEl.textContent  = hit.name;
     }
 
-    // نسبة المطابقة + مؤشر الجبهة
+    // نسبة المطابقة
     const pctEl = document.getElementById('popup-pct');
     pctEl.style.color = hit.color;
-    pctEl.textContent = hit.match.toFixed(0) + '%' + (hit.isFront ? ' 🌊⚡' : '');
+    pctEl.textContent = hit.match.toFixed(0) + '% match' + (hit.isFront ? '  🌊⚡ Front' : '');
 
-    // المسافة
+    // المسافة + عدد النقاط
     if (userLat) {
       const km = haversineKm(userLat, userLon, hit.lat, hit.lon);
       document.getElementById('popup-dist').textContent =
-        '📍 ' + (km < 1 ? `${(km*1000).toFixed(0)} م منك` : `${km.toFixed(1)} كم منك`);
+        '📍 ' + (km < 1 ? `${(km*1000).toFixed(0)} m` : `${km.toFixed(1)} km`) +
+        `  ·  ~${hit.radiusKm} km zone  ·  ${hit.count} pts`;
     }
 
-    // القيم الفعلية الكاملة
+    // القيم البيئية الفعلية
     const varsEl = document.getElementById('popup-vars');
     varsEl.innerHTML = '';
     const pd = hit.pointData || {};
-    const displayVars = [
-      { key:'temperature',  label:'🌡️ حرارة',    unit:'°C',    decimals:1 },
-      { key:'chlorophyll',  label:'🟢 كلوروفيل',  unit:'mg/m³', decimals:2 },
-      { key:'oxygen',       label:'💧 أكسجين',    unit:'ml/l',  decimals:2 },
-      { key:'salinity',     label:'🧂 ملوحة',      unit:'ppt',   decimals:1 },
-      { key:'transparency', label:'👁️ Secchi',     unit:'m',     decimals:0 },
-      { key:'currentSpeed', label:'🌊 تيار',       unit:'kn',    decimals:2 },
-      { key:'thermocline',  label:'📏 تارموكلاين', unit:'m',     decimals:0 }
-    ];
-    displayVars.forEach(v => {
+    [
+      { key:'temperature',  label:'🌡️ Temp',        unit:'°C',    dec:1 },
+      { key:'chlorophyll',  label:'🟢 Chl',          unit:'mg/m³', dec:2 },
+      { key:'oxygen',       label:'💧 O₂',           unit:'ml/l',  dec:2 },
+      { key:'salinity',     label:'🧂 Salinity',      unit:'ppt',   dec:1 },
+      { key:'transparency', label:'👁️ Secchi',        unit:'m',     dec:0 },
+      { key:'currentSpeed', label:'🌊 Current',       unit:'kn',    dec:2 },
+      { key:'thermocline',  label:'📏 Thermocline',   unit:'m',     dec:0 }
+    ].forEach(v => {
       const val = pd[v.key];
-      const d = document.createElement('div');
+      const d   = document.createElement('div');
       d.className = 'popup-var-item';
-      if (val != null) {
-        d.textContent = `${v.label}: ${val.toFixed(v.decimals)} ${v.unit}`;
-      } else {
-        d.style.opacity = '0.4';
-        d.textContent = `${v.label}: —`;
-      }
+      d.textContent = val != null
+        ? `${v.label}: ${val.toFixed(v.dec)} ${v.unit}`
+        : `${v.label}: —`;
+      if (val == null) d.style.opacity = '0.4';
       varsEl.appendChild(d);
     });
   } else {
