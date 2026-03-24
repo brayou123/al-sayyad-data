@@ -15,7 +15,7 @@ if not USERNAME or not PASSWORD:
     raise ValueError("Missing Copernicus credentials")
 
 # =====================================================
-# الإحداثيات الصحيحة (من رسائل التحذير)
+# الإحداثيات
 # =====================================================
 LAT_MIN = 30.1875
 LAT_MAX = 45.97916793823242
@@ -129,42 +129,37 @@ elif 'time' in ds_surf.coords:
     ds_surf = ds_surf.drop_vars('time')
 
 # =====================================================
-# حساب التارموكلاين
+# حساب التارموكلاين — بدون حلقة (numpy vectorized)
 # =====================================================
-print("Computing thermocline...")
-lats = ds_surf.latitude.values
-lons = ds_surf.longitude.values
+print("Computing thermocline (vectorized)...")
 depth_vals = ds_prof.depth.values
 
-thermocline_map = np.full((len(lats), len(lons)), np.nan)
+# شكل البيانات: (time, depth, lat, lon)
+temp_4d = ds_prof.thetao.values  # (time, depth, lat, lon)
+temp_3d = temp_4d[0]             # (depth, lat, lon) — أول وقت فقط
 
-for i, lat in enumerate(lats):
-    for j, lon in enumerate(lons):
-        point_profile = ds_prof.sel(latitude=lat, longitude=lon, method='nearest')
-        temp_profile = point_profile.thetao.isel(time=0).values
-        depths_clean = []
-        temps_clean = []
-        for d_idx, t in enumerate(temp_profile):
-            if not np.isnan(t):
-                depths_clean.append(depth_vals[d_idx])
-                temps_clean.append(t)
-        if len(temps_clean) < 2:
-            thermocline_map[i, j] = 35.0
-            continue
-        max_grad = 0.0
-        thermo_depth = 35.0
-        for k in range(1, len(temps_clean)):
-            grad = abs(temps_clean[k] - temps_clean[k-1])
-            if grad > max_grad:
-                max_grad = grad
-                thermo_depth = (depths_clean[k] + depths_clean[k-1]) / 2
-        thermocline_map[i, j] = thermo_depth
+# حساب التدرج على محور العمق
+grad = np.abs(np.diff(temp_3d, axis=0))  # (depth-1, lat, lon)
+
+# إيجاد أعمق تدرج أقصى
+thermo_idx = np.argmax(grad, axis=0)     # (lat, lon)
+
+# حساب عمق التارموكلاين كمتوسط بين طبقتين
+depth_upper = depth_vals[:-1]
+depth_lower = depth_vals[1:]
+thermocline_map = (depth_upper[thermo_idx] + depth_lower[thermo_idx]) / 2
+
+# نقاط بدون بيانات → NaN
+all_nan_mask = np.all(np.isnan(temp_3d), axis=0)
+thermocline_map = np.where(all_nan_mask, np.nan, thermocline_map)
 
 # =====================================================
 # بناء البيانات العمودية (columnar)
 # =====================================================
 print("Building columnar data...")
-# قوائم فارغة
+lats = ds_surf.latitude.values
+lons = ds_surf.longitude.values
+
 lat_list = []
 lon_list = []
 temp_list = []
@@ -177,47 +172,55 @@ thermo_list = []
 
 for i, lat in enumerate(lats):
     for j, lon in enumerate(lons):
-        temp_val = ds_surf.thetao.isel(latitude=i, longitude=j).values
+        temp_val = float(ds_surf.thetao.isel(latitude=i, longitude=j).values)
         if np.isnan(temp_val):
             continue
 
-        # إضافة الإحداثيات
         lat_list.append(round(float(lat), 6))
         lon_list.append(round(float(lon), 6))
 
-        # درجة الحرارة
-        temp_list.append(round(float(temp_val), 2))
+        # درجة الحرارة (°C) — بدون تغيير
+        temp_list.append(round(temp_val, 2))
 
-        # الملوحة
-        sal_val = ds_surf.so.isel(latitude=i, longitude=j).values
-        sal_list.append(round(float(sal_val), 2) if not np.isnan(sal_val) else None)
+        # الملوحة (ppt) — بدون تغيير
+        sal_val = float(ds_surf.so.isel(latitude=i, longitude=j).values)
+        sal_list.append(round(sal_val, 2) if not np.isnan(sal_val) else None)
 
-        # التيارات
-        u_val = ds_surf.uo.isel(latitude=i, longitude=j).values
-        v_val = ds_surf.vo.isel(latitude=i, longitude=j).values
+        # التيار: m/s → knots (× 1.944)
+        u_val = float(ds_surf.uo.isel(latitude=i, longitude=j).values)
+        v_val = float(ds_surf.vo.isel(latitude=i, longitude=j).values)
         if not np.isnan(u_val) and not np.isnan(v_val):
-            curr_speed = round(float(np.sqrt(u_val**2 + v_val**2)), 3)
+            curr_knots = round(np.sqrt(u_val**2 + v_val**2) * 1.944, 2)
         else:
-            curr_speed = None
-        curr_list.append(curr_speed)
+            curr_knots = None
+        curr_list.append(curr_knots)
 
-        # كلوروفيل
-        chl_val = ds_surf.chl.isel(latitude=i, longitude=j).values
-        chl_list.append(round(float(chl_val), 4) if not np.isnan(chl_val) else None)
+        # كلوروفيل (mg/m³) — بدون تغيير
+        chl_val = float(ds_surf.chl.isel(latitude=i, longitude=j).values)
+        chl_list.append(round(chl_val, 4) if not np.isnan(chl_val) else None)
 
-        # أكسجين
-        o2_val = ds_surf.o2.isel(latitude=i, longitude=j).values
-        o2_list.append(round(float(o2_val), 2) if not np.isnan(o2_val) else None)
+        # الأكسجين: mmol/m³ → ml/l (÷ 44.661)
+        o2_val = float(ds_surf.o2.isel(latitude=i, longitude=j).values)
+        if not np.isnan(o2_val):
+            o2_ml = round(o2_val / 44.661, 2)
+        else:
+            o2_ml = None
+        o2_list.append(o2_ml)
 
-        # شفافية
-        kd_val = ds_surf.kd490.isel(latitude=i, longitude=j).values
-        kd_list.append(round(float(kd_val), 2) if not np.isnan(kd_val) else None)
+        # الشفافية: kd490 m⁻¹ → Secchi depth m (1.7 ÷ kd490)
+        kd_val = float(ds_surf.kd490.isel(latitude=i, longitude=j).values)
+        if not np.isnan(kd_val) and kd_val > 0.01:
+            secchi = round(1.7 / kd_val, 1)
+        else:
+            secchi = None
+        kd_list.append(secchi)
 
-        # تارموكلاين
-        thermo_list.append(round(float(thermocline_map[i, j]), 1))
+        # التارموكلاين (m) — من الخريطة المحسوبة مسبقاً
+        thermo_val = thermocline_map[i, j]
+        thermo_list.append(round(float(thermo_val), 1) if not np.isnan(thermo_val) else None)
 
 # =====================================================
-# حفظ data.json بالصيغة العمودية
+# حفظ data.json
 # =====================================================
 output = {
     "timestamp": yesterday,
@@ -236,5 +239,8 @@ output = {
 with open("data.json", "w", encoding="utf-8") as f:
     json.dump(output, f, separators=(',', ':'), ensure_ascii=False)
 
-print(f"Saved {len(lat_list)} points in columnar format")
+print(f"Saved {len(lat_list)} points")
 print("data.json saved successfully")
+print(f"Sample oxygen (ml/l): {o2_list[:3]}")
+print(f"Sample transparency/Secchi (m): {kd_list[:3]}")
+print(f"Sample currentSpeed (knots): {curr_list[:3]}")
