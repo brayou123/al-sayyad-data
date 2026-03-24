@@ -4,8 +4,8 @@ from copernicusmarine import describe
 
 print("🔍 Searching for Mediterranean datasets...")
 
-# المتغيرات البيئية ستُقرأ تلقائياً
-result = describe(contains="MED")
+# contains يجب أن يكون قائمة (list)
+result = describe(contains=["MED"])
 
 print("\n📊 Found datasets:")
 for product in result.products:
