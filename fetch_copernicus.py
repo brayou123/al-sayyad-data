@@ -7,21 +7,21 @@ from datetime import datetime, timedelta
 from copernicusmarine import subset
 
 # =====================================================
-# المصادقة
+# المصادقة – استخدام الأسماء التي لديك في GitHub Secrets
 # =====================================================
-USERNAME = os.environ.get("COPERNICUSMARINE_USERNAME")
-PASSWORD = os.environ.get("COPERNICUSMARINE_PASSWORD")
+USERNAME = os.environ.get("COPERNICUS_USER")
+PASSWORD = os.environ.get("COPERNICUS_PASS")
 if not USERNAME or not PASSWORD:
     raise ValueError("Missing Copernicus credentials")
 
 # =====================================================
-# الإحداثيات الثابتة (من رسائل الخطأ)
+# الإحداثيات الثابتة (من رسائل الخطأ السابقة)
 # =====================================================
 LAT_MIN = 30.1875
 LAT_MAX = 45.97916793823242
 LON_MIN = -6.0
 LON_MAX = 36.0
-DEPTH_SURFACE = 1.0182366371154785   # أقرب عمق للسطح
+DEPTH_SURFACE = 1.0182366371154785
 DEPTH_MIN_PROFILE = 0.0
 DEPTH_MAX_PROFILE = 100.0
 
@@ -46,7 +46,16 @@ def download_and_open(dataset_id, variables, filename, depth_min=DEPTH_SURFACE, 
         username=USERNAME, password=PASSWORD,
         output_filename=filename
     )
-    return xr.open_dataset(path)
+    # التحقق من وجود الملف
+    if not os.path.exists(path):
+        raise RuntimeError(f"File {path} not created")
+    file_size = os.path.getsize(path)
+    if file_size == 0:
+        raise RuntimeError(f"File {path} is empty (size 0)")
+    print(f"  Downloaded {path} ({file_size} bytes)")
+
+    # فتح الملف مع تحديد المحرك
+    return xr.open_dataset(path, engine='netcdf4')
 
 # =====================================================
 # تحميل البيانات السطحية
@@ -84,7 +93,10 @@ profile_path = subset(
     username=USERNAME, password=PASSWORD,
     output_filename="profile.nc"
 )
-ds_prof = xr.open_dataset(profile_path)
+if not os.path.exists(profile_path):
+    raise RuntimeError(f"Profile file {profile_path} not created")
+print(f"  Downloaded profile.nc ({os.path.getsize(profile_path)} bytes)")
+ds_prof = xr.open_dataset(profile_path, engine='netcdf4')
 
 # =====================================================
 # دمج البيانات السطحية
