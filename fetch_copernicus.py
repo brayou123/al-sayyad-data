@@ -9,8 +9,8 @@ from copernicusmarine import subset
 # =====================================================
 # 1. المصادقة (من GitHub Secrets)
 # =====================================================
-USERNAME = os.environ.get("COPERNICUS_USERNAME")
-PASSWORD = os.environ.get("COPERNICUS_PASSWORD")
+USERNAME = os.environ.get("COPERNICUS_USER")
+PASSWORD = os.environ.get("COPERNICUS_PASS")
 if not USERNAME or not PASSWORD:
     raise ValueError("Missing Copernicus credentials in environment")
 
