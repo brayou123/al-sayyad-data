@@ -34,14 +34,6 @@ print(f"Fetching data for {yesterday}")
 # =====================================================
 # Helper functions
 # =====================================================
-def haversine(lat1, lon1, lat2, lon2):
-    """Haversine distance in km"""
-    R = 6371
-    dlat = np.radians(lat2 - lat1)
-    dlon = np.radians(lon2 - lon1)
-    a = np.sin(dlat/2)**2 + np.cos(np.radians(lat1)) * np.cos(np.radians(lat2)) * np.sin(dlon/2)**2
-    return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
-
 def get_path_from_result(result):
     if isinstance(result, str):
         return result
@@ -127,7 +119,7 @@ datasets = [
     ds_kd.squeeze()
 ]
 aligned = xr.align(*datasets, join='inner')
-ds_surf = xr.merge(aligned, compat='override')  # avoid FutureWarning
+ds_surf = xr.merge(aligned, compat='override')
 if 'time' in ds_surf.dims:
     ds_surf = ds_surf.isel(time=0, drop=True)
 elif 'time' in ds_surf.coords:
@@ -149,30 +141,35 @@ all_nan_mask = np.all(np.isnan(temp_3d), axis=0)
 thermocline_map = np.where(all_nan_mask, np.nan, thermocline_map)
 
 # =====================================================
-# Build columnar data with front intensity (Sobel on regular grid)
+# Build columnar data and compute front intensity efficiently
 # =====================================================
 print("Building columnar data...")
 lats = ds_surf.latitude.values
 lons = ds_surf.longitude.values
 
-# Collect all valid temperature points for front calculation
-valid_points = []
+# Collect all valid temperature points and their indices for front calculation
+valid_temp_points = []
+valid_temp_lats = []
+valid_temp_lons = []
+valid_temp_vals = []
 for i, lat in enumerate(lats):
     for j, lon in enumerate(lons):
         temp_val = float(ds_surf.thetao.isel(latitude=i, longitude=j).values)
-        if np.isnan(temp_val):
-            continue
-        valid_points.append((lat, lon, temp_val))
+        if not np.isnan(temp_val):
+            valid_temp_points.append((lat, lon, temp_val, i, j))
+            valid_temp_lats.append(lat)
+            valid_temp_lons.append(lon)
+            valid_temp_vals.append(temp_val)
 
-if len(valid_points) == 0:
+if not valid_temp_points:
     raise RuntimeError("No valid temperature data for front calculation")
 
-# Create regular grid for Sobel (step 0.05° ~ 5.5 km)
-min_lat = min(p[0] for p in valid_points)
-max_lat = max(p[0] for p in valid_points)
-min_lon = min(p[1] for p in valid_points)
-max_lon = max(p[1] for p in valid_points)
-step = 0.05
+# Create a regular grid with 0.1° step for front calculation (faster)
+min_lat = min(valid_temp_lats)
+max_lat = max(valid_temp_lats)
+min_lon = min(valid_temp_lons)
+max_lon = max(valid_temp_lons)
+step = 0.1  # degrees (approx 11 km)
 lat_grid = np.arange(min_lat, max_lat + step, step)
 lon_grid = np.arange(min_lon, max_lon + step, step)
 nlat = len(lat_grid)
@@ -180,48 +177,73 @@ nlon = len(lon_grid)
 
 print(f"Creating grid {nlat} x {nlon} for front calculation")
 
-# Interpolate temperature onto grid using IDW (fast nearest neighbor approximation)
-grid_temp = np.full((nlat, nlon), np.nan)
-for i, lat in enumerate(lat_grid):
-    for j, lon in enumerate(lon_grid):
-        # Find points within 0.2 deg (~22 km)
-        candidates = [(p[2], haversine(lat, lon, p[0], p[1])) for p in valid_points
-                      if abs(p[0] - lat) < 0.2 and abs(p[1] - lon) < 0.2]
-        if not candidates:
-            continue
-        # Simple inverse distance weighting
-        weights = [1.0/(d+0.001) for _, d in candidates]
-        temp = np.average([t for t, _ in candidates], weights=weights)
-        grid_temp[i, j] = temp
+# Assign each point to the nearest grid cell (by rounding)
+# This avoids expensive distance loops
+lat_indices = np.round((valid_temp_lats - min_lat) / step).astype(int)
+lon_indices = np.round((valid_temp_lons - min_lon) / step).astype(int)
+# Clip indices to valid range
+lat_indices = np.clip(lat_indices, 0, nlat-1)
+lon_indices = np.clip(lon_indices, 0, nlon-1)
 
-# Sobel operator to compute gradient magnitude (°C per km)
-grad_mag = np.zeros((nlat, nlon))
+# Build grid temperature: for each cell, take average of points assigned to it
+grid_temp = np.full((nlat, nlon), np.nan)
+grid_counts = np.zeros((nlat, nlon), dtype=int)
+for idx in range(len(valid_temp_points)):
+    i = lat_indices[idx]
+    j = lon_indices[idx]
+    if np.isnan(grid_temp[i, j]):
+        grid_temp[i, j] = valid_temp_vals[idx]
+    else:
+        # average (optional: could keep only nearest, but average is fine)
+        grid_temp[i, j] = (grid_temp[i, j] * grid_counts[i, j] + valid_temp_vals[idx]) / (grid_counts[i, j] + 1)
+    grid_counts[i, j] += 1
+
+# Sobel operator using numpy (vectorized)
+# Compute gradient in x (lon) and y (lat) directions
+# Use central difference for interior cells
+grad_x = np.zeros((nlat, nlon))
+grad_y = np.zeros((nlat, nlon))
+
+# Sobel kernels
 for i in range(1, nlat-1):
     for j in range(1, nlon-1):
         if np.isnan(grid_temp[i, j]):
             continue
-        # Sobel kernels
+        # Sobel Gx (horizontal)
         gx = (grid_temp[i-1, j+1] if not np.isnan(grid_temp[i-1, j+1]) else grid_temp[i, j]) \
              - (grid_temp[i-1, j-1] if not np.isnan(grid_temp[i-1, j-1]) else grid_temp[i, j]) \
-             + 2*((grid_temp[i, j+1] if not np.isnan(grid_temp[i, j+1]) else grid_temp[i, j]) \
-                 - (grid_temp[i, j-1] if not np.isnan(grid_temp[i, j-1]) else grid_temp[i, j])) \
+             + 2 * ((grid_temp[i, j+1] if not np.isnan(grid_temp[i, j+1]) else grid_temp[i, j]) \
+                  - (grid_temp[i, j-1] if not np.isnan(grid_temp[i, j-1]) else grid_temp[i, j])) \
              + (grid_temp[i+1, j+1] if not np.isnan(grid_temp[i+1, j+1]) else grid_temp[i, j]) \
              - (grid_temp[i+1, j-1] if not np.isnan(grid_temp[i+1, j-1]) else grid_temp[i, j])
+        # Sobel Gy (vertical)
         gy = (grid_temp[i+1, j-1] if not np.isnan(grid_temp[i+1, j-1]) else grid_temp[i, j]) \
              - (grid_temp[i-1, j-1] if not np.isnan(grid_temp[i-1, j-1]) else grid_temp[i, j]) \
-             + 2*((grid_temp[i+1, j] if not np.isnan(grid_temp[i+1, j]) else grid_temp[i, j]) \
-                 - (grid_temp[i-1, j] if not np.isnan(grid_temp[i-1, j]) else grid_temp[i, j])) \
+             + 2 * ((grid_temp[i+1, j] if not np.isnan(grid_temp[i+1, j]) else grid_temp[i, j]) \
+                  - (grid_temp[i-1, j] if not np.isnan(grid_temp[i-1, j]) else grid_temp[i, j])) \
              + (grid_temp[i+1, j+1] if not np.isnan(grid_temp[i+1, j+1]) else grid_temp[i, j]) \
              - (grid_temp[i-1, j+1] if not np.isnan(grid_temp[i-1, j+1]) else grid_temp[i, j])
-        # Convert to °C per km: 1 deg latitude ≈ 111 km, 1 deg longitude ≈ 111*cos(lat)
-        lat_rad = lat_grid[i] * np.pi/180
-        km_per_deg_lon = 111 * np.cos(lat_rad)
+        # Convert to °C per km
+        lat_rad = lat_grid[i] * np.pi / 180
         km_per_deg_lat = 111
-        grad_x = gx / (2*step) / km_per_deg_lon
-        grad_y = gy / (2*step) / km_per_deg_lat
-        grad_mag[i, j] = np.sqrt(grad_x**2 + grad_y**2)
+        km_per_deg_lon = 111 * np.cos(lat_rad)
+        grad_x[i, j] = gx / (2 * step) / km_per_deg_lon
+        grad_y[i, j] = gy / (2 * step) / km_per_deg_lat
 
-# Assign front intensity to each original point (0-1, 0.3 °C/km = strong front)
+grad_mag = np.sqrt(grad_x**2 + grad_y**2)
+
+# Now assign front intensity to each original point using the same grid indices
+# We already have lat_indices and lon_indices for valid points; we can reuse them
+# For all points (including those with NaN temperature, we will assign 0.5 later)
+front_intensity_map = np.zeros((nlat, nlon))
+for i in range(nlat):
+    for j in range(nlon):
+        if not np.isnan(grad_mag[i, j]):
+            front_intensity_map[i, j] = min(1.0, grad_mag[i, j] / 0.3)
+        else:
+            front_intensity_map[i, j] = 0.5  # default
+
+# Now iterate over all surface points (including those with NaN temperature) to build output
 lat_list = []
 lon_list = []
 temp_list = []
@@ -274,17 +296,12 @@ for i, lat in enumerate(lats):
         thermo_val = thermocline_map[i, j]
         thermo_list.append(round(float(thermo_val), 1) if not np.isnan(thermo_val) else None)
 
-        # Find nearest grid cell for front intensity
-        best_dist = np.inf
-        best_intensity = 0.0
-        for gi in range(nlat):
-            for gj in range(nlon):
-                d = haversine(lat, lon, lat_grid[gi], lon_grid[gj])
-                if d < best_dist:
-                    best_dist = d
-                    best_intensity = grad_mag[gi, gj] if not np.isnan(grad_mag[gi, gj]) else 0.0
-        intensity = min(1.0, best_intensity / 0.3)
-        front_list.append(round(intensity, 3))
+        # Front intensity: find nearest grid cell using rounding (same as before)
+        i_grid = int(round((lat - min_lat) / step))
+        j_grid = int(round((lon - min_lon) / step))
+        i_grid = np.clip(i_grid, 0, nlat-1)
+        j_grid = np.clip(j_grid, 0, nlon-1)
+        front_list.append(round(front_intensity_map[i_grid, j_grid], 3))
 
 # =====================================================
 # Save data.json
