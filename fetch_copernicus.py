@@ -32,8 +32,16 @@ yesterday = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
 print(f"Fetching data for {yesterday}")
 
 # =====================================================
-# Helper to extract path
+# Helper functions
 # =====================================================
+def haversine(lat1, lon1, lat2, lon2):
+    """Haversine distance in km"""
+    R = 6371
+    dlat = np.radians(lat2 - lat1)
+    dlon = np.radians(lon2 - lon1)
+    a = np.sin(dlat/2)**2 + np.cos(np.radians(lat1)) * np.cos(np.radians(lat2)) * np.sin(dlon/2)**2
+    return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
+
 def get_path_from_result(result):
     if isinstance(result, str):
         return result
@@ -43,9 +51,6 @@ def get_path_from_result(result):
         return result.filename
     raise TypeError(f"Cannot extract path from {type(result)}: {result}")
 
-# =====================================================
-# Download and open
-# =====================================================
 def download_and_open(dataset_id, variables, filename, depth_min=DEPTH_SURFACE, depth_max=DEPTH_SURFACE):
     print(f"Downloading {variables} from {dataset_id}...")
     result = subset(
@@ -122,7 +127,7 @@ datasets = [
     ds_kd.squeeze()
 ]
 aligned = xr.align(*datasets, join='inner')
-ds_surf = xr.merge(aligned)
+ds_surf = xr.merge(aligned, compat='override')  # avoid FutureWarning
 if 'time' in ds_surf.dims:
     ds_surf = ds_surf.isel(time=0, drop=True)
 elif 'time' in ds_surf.coords:
@@ -217,17 +222,6 @@ for i in range(1, nlat-1):
         grad_mag[i, j] = np.sqrt(grad_x**2 + grad_y**2)
 
 # Assign front intensity to each original point (0-1, 0.3 °C/km = strong front)
-def haversine(lat1, lon1, lat2, lon2):
-    R = 6371
-    dlat = np.radians(lat2 - lat1)
-    dlon = np.radians(lon2 - lon1)
-    a = np.sin(dlat/2)**2 + np.cos(np.radians(lat1)) * np.cos(np.radians(lat2)) * np.sin(dlon/2)**2
-    return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
-
-# Build a list of grid cells for fast nearest lookup
-grid_cells = [(lat_grid[i], lon_grid[j]) for i in range(nlat) for j in range(nlon)]
-
-# Now iterate over all surface points and store values
 lat_list = []
 lon_list = []
 temp_list = []
@@ -283,11 +277,12 @@ for i, lat in enumerate(lats):
         # Find nearest grid cell for front intensity
         best_dist = np.inf
         best_intensity = 0.0
-        for gi, gj in [(i, j) for i in range(nlat) for j in range(nlon)]:
-            d = haversine(lat, lon, lat_grid[gi], lon_grid[gj])
-            if d < best_dist:
-                best_dist = d
-                best_intensity = grad_mag[gi, gj] if not np.isnan(grad_mag[gi, gj]) else 0.0
+        for gi in range(nlat):
+            for gj in range(nlon):
+                d = haversine(lat, lon, lat_grid[gi], lon_grid[gj])
+                if d < best_dist:
+                    best_dist = d
+                    best_intensity = grad_mag[gi, gj] if not np.isnan(grad_mag[gi, gj]) else 0.0
         intensity = min(1.0, best_intensity / 0.3)
         front_list.append(round(intensity, 3))
 
