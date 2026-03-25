@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from copernicusmarine import subset
 
 # =====================================================
-# المصادقة
+# Credentials
 # =====================================================
 USERNAME = os.environ.get("COPERNICUSMARINE_USERNAME")
 PASSWORD = os.environ.get("COPERNICUSMARINE_PASSWORD")
@@ -15,7 +15,7 @@ if not USERNAME or not PASSWORD:
     raise ValueError("Missing Copernicus credentials")
 
 # =====================================================
-# الإحداثيات
+# Coordinates
 # =====================================================
 LAT_MIN = 30.1875
 LAT_MAX = 45.97916793823242
@@ -26,13 +26,13 @@ DEPTH_MIN_PROFILE = DEPTH_SURFACE
 DEPTH_MAX_PROFILE = 100.0
 
 # =====================================================
-# الوقت
+# Time
 # =====================================================
 yesterday = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
 print(f"Fetching data for {yesterday}")
 
 # =====================================================
-# دالة مساعدة لاستخراج المسار
+# Helper to extract path
 # =====================================================
 def get_path_from_result(result):
     if isinstance(result, str):
@@ -44,7 +44,7 @@ def get_path_from_result(result):
     raise TypeError(f"Cannot extract path from {type(result)}: {result}")
 
 # =====================================================
-# دالة للتحميل والفتح
+# Download and open
 # =====================================================
 def download_and_open(dataset_id, variables, filename, depth_min=DEPTH_SURFACE, depth_max=DEPTH_SURFACE):
     print(f"Downloading {variables} from {dataset_id}...")
@@ -68,7 +68,7 @@ def download_and_open(dataset_id, variables, filename, depth_min=DEPTH_SURFACE, 
     return xr.open_dataset(path, engine='netcdf4')
 
 # =====================================================
-# تحميل البيانات السطحية
+# Download surface datasets
 # =====================================================
 ds_temp = download_and_open(
     "cmems_mod_med_phy-tem_anfc_4.2km_P1D-m", ["thetao"], "temp.nc"
@@ -90,7 +90,7 @@ ds_kd = download_and_open(
 )
 
 # =====================================================
-# تحميل ملف تعريف درجة الحرارة
+# Download temperature profile
 # =====================================================
 print("Downloading temperature profile (surface to 100m)...")
 profile_result = subset(
@@ -110,7 +110,7 @@ print(f"  Downloaded profile.nc ({os.path.getsize(profile_path)} bytes)")
 ds_prof = xr.open_dataset(profile_path, engine='netcdf4')
 
 # =====================================================
-# دمج البيانات السطحية
+# Merge surface datasets
 # =====================================================
 print("Aligning and merging surface datasets...")
 datasets = [
@@ -129,37 +129,105 @@ elif 'time' in ds_surf.coords:
     ds_surf = ds_surf.drop_vars('time')
 
 # =====================================================
-# حساب التارموكلاين — بدون حلقة (numpy vectorized)
+# Compute thermocline (vectorized)
 # =====================================================
-print("Computing thermocline (vectorized)...")
+print("Computing thermocline...")
 depth_vals = ds_prof.depth.values
-
-# شكل البيانات: (time, depth, lat, lon)
-temp_4d = ds_prof.thetao.values  # (time, depth, lat, lon)
-temp_3d = temp_4d[0]             # (depth, lat, lon) — أول وقت فقط
-
-# حساب التدرج على محور العمق
-grad = np.abs(np.diff(temp_3d, axis=0))  # (depth-1, lat, lon)
-
-# إيجاد أعمق تدرج أقصى
-thermo_idx = np.argmax(grad, axis=0)     # (lat, lon)
-
-# حساب عمق التارموكلاين كمتوسط بين طبقتين
+temp_4d = ds_prof.thetao.values
+temp_3d = temp_4d[0]  # first time only
+grad = np.abs(np.diff(temp_3d, axis=0))
+thermo_idx = np.argmax(grad, axis=0)
 depth_upper = depth_vals[:-1]
 depth_lower = depth_vals[1:]
 thermocline_map = (depth_upper[thermo_idx] + depth_lower[thermo_idx]) / 2
-
-# نقاط بدون بيانات → NaN
 all_nan_mask = np.all(np.isnan(temp_3d), axis=0)
 thermocline_map = np.where(all_nan_mask, np.nan, thermocline_map)
 
 # =====================================================
-# بناء البيانات العمودية (columnar)
+# Build columnar data with front intensity (Sobel on regular grid)
 # =====================================================
 print("Building columnar data...")
 lats = ds_surf.latitude.values
 lons = ds_surf.longitude.values
 
+# Collect all valid temperature points for front calculation
+valid_points = []
+for i, lat in enumerate(lats):
+    for j, lon in enumerate(lons):
+        temp_val = float(ds_surf.thetao.isel(latitude=i, longitude=j).values)
+        if np.isnan(temp_val):
+            continue
+        valid_points.append((lat, lon, temp_val))
+
+if len(valid_points) == 0:
+    raise RuntimeError("No valid temperature data for front calculation")
+
+# Create regular grid for Sobel (step 0.05° ~ 5.5 km)
+min_lat = min(p[0] for p in valid_points)
+max_lat = max(p[0] for p in valid_points)
+min_lon = min(p[1] for p in valid_points)
+max_lon = max(p[1] for p in valid_points)
+step = 0.05
+lat_grid = np.arange(min_lat, max_lat + step, step)
+lon_grid = np.arange(min_lon, max_lon + step, step)
+nlat = len(lat_grid)
+nlon = len(lon_grid)
+
+print(f"Creating grid {nlat} x {nlon} for front calculation")
+
+# Interpolate temperature onto grid using IDW (fast nearest neighbor approximation)
+grid_temp = np.full((nlat, nlon), np.nan)
+for i, lat in enumerate(lat_grid):
+    for j, lon in enumerate(lon_grid):
+        # Find points within 0.2 deg (~22 km)
+        candidates = [(p[2], haversine(lat, lon, p[0], p[1])) for p in valid_points
+                      if abs(p[0] - lat) < 0.2 and abs(p[1] - lon) < 0.2]
+        if not candidates:
+            continue
+        # Simple inverse distance weighting
+        weights = [1.0/(d+0.001) for _, d in candidates]
+        temp = np.average([t for t, _ in candidates], weights=weights)
+        grid_temp[i, j] = temp
+
+# Sobel operator to compute gradient magnitude (°C per km)
+grad_mag = np.zeros((nlat, nlon))
+for i in range(1, nlat-1):
+    for j in range(1, nlon-1):
+        if np.isnan(grid_temp[i, j]):
+            continue
+        # Sobel kernels
+        gx = (grid_temp[i-1, j+1] if not np.isnan(grid_temp[i-1, j+1]) else grid_temp[i, j]) \
+             - (grid_temp[i-1, j-1] if not np.isnan(grid_temp[i-1, j-1]) else grid_temp[i, j]) \
+             + 2*((grid_temp[i, j+1] if not np.isnan(grid_temp[i, j+1]) else grid_temp[i, j]) \
+                 - (grid_temp[i, j-1] if not np.isnan(grid_temp[i, j-1]) else grid_temp[i, j])) \
+             + (grid_temp[i+1, j+1] if not np.isnan(grid_temp[i+1, j+1]) else grid_temp[i, j]) \
+             - (grid_temp[i+1, j-1] if not np.isnan(grid_temp[i+1, j-1]) else grid_temp[i, j])
+        gy = (grid_temp[i+1, j-1] if not np.isnan(grid_temp[i+1, j-1]) else grid_temp[i, j]) \
+             - (grid_temp[i-1, j-1] if not np.isnan(grid_temp[i-1, j-1]) else grid_temp[i, j]) \
+             + 2*((grid_temp[i+1, j] if not np.isnan(grid_temp[i+1, j]) else grid_temp[i, j]) \
+                 - (grid_temp[i-1, j] if not np.isnan(grid_temp[i-1, j]) else grid_temp[i, j])) \
+             + (grid_temp[i+1, j+1] if not np.isnan(grid_temp[i+1, j+1]) else grid_temp[i, j]) \
+             - (grid_temp[i-1, j+1] if not np.isnan(grid_temp[i-1, j+1]) else grid_temp[i, j])
+        # Convert to °C per km: 1 deg latitude ≈ 111 km, 1 deg longitude ≈ 111*cos(lat)
+        lat_rad = lat_grid[i] * np.pi/180
+        km_per_deg_lon = 111 * np.cos(lat_rad)
+        km_per_deg_lat = 111
+        grad_x = gx / (2*step) / km_per_deg_lon
+        grad_y = gy / (2*step) / km_per_deg_lat
+        grad_mag[i, j] = np.sqrt(grad_x**2 + grad_y**2)
+
+# Assign front intensity to each original point (0-1, 0.3 °C/km = strong front)
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371
+    dlat = np.radians(lat2 - lat1)
+    dlon = np.radians(lon2 - lon1)
+    a = np.sin(dlat/2)**2 + np.cos(np.radians(lat1)) * np.cos(np.radians(lat2)) * np.sin(dlon/2)**2
+    return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
+
+# Build a list of grid cells for fast nearest lookup
+grid_cells = [(lat_grid[i], lon_grid[j]) for i in range(nlat) for j in range(nlon)]
+
+# Now iterate over all surface points and store values
 lat_list = []
 lon_list = []
 temp_list = []
@@ -169,6 +237,7 @@ o2_list = []
 kd_list = []
 curr_list = []
 thermo_list = []
+front_list = []
 
 for i, lat in enumerate(lats):
     for j, lon in enumerate(lons):
@@ -178,15 +247,11 @@ for i, lat in enumerate(lats):
 
         lat_list.append(round(float(lat), 6))
         lon_list.append(round(float(lon), 6))
-
-        # درجة الحرارة (°C) — بدون تغيير
         temp_list.append(round(temp_val, 2))
 
-        # الملوحة (ppt) — بدون تغيير
         sal_val = float(ds_surf.so.isel(latitude=i, longitude=j).values)
         sal_list.append(round(sal_val, 2) if not np.isnan(sal_val) else None)
 
-        # التيار: m/s → knots (× 1.944)
         u_val = float(ds_surf.uo.isel(latitude=i, longitude=j).values)
         v_val = float(ds_surf.vo.isel(latitude=i, longitude=j).values)
         if not np.isnan(u_val) and not np.isnan(v_val):
@@ -195,11 +260,9 @@ for i, lat in enumerate(lats):
             curr_knots = None
         curr_list.append(curr_knots)
 
-        # كلوروفيل (mg/m³) — بدون تغيير
         chl_val = float(ds_surf.chl.isel(latitude=i, longitude=j).values)
         chl_list.append(round(chl_val, 4) if not np.isnan(chl_val) else None)
 
-        # الأكسجين: mmol/m³ → ml/l (÷ 44.661)
         o2_val = float(ds_surf.o2.isel(latitude=i, longitude=j).values)
         if not np.isnan(o2_val):
             o2_ml = round(o2_val / 44.661, 2)
@@ -207,7 +270,6 @@ for i, lat in enumerate(lats):
             o2_ml = None
         o2_list.append(o2_ml)
 
-        # الشفافية: kd490 m⁻¹ → Secchi depth m (1.7 ÷ kd490)
         kd_val = float(ds_surf.kd490.isel(latitude=i, longitude=j).values)
         if not np.isnan(kd_val) and kd_val > 0.01:
             secchi = round(1.7 / kd_val, 1)
@@ -215,12 +277,22 @@ for i, lat in enumerate(lats):
             secchi = None
         kd_list.append(secchi)
 
-        # التارموكلاين (m) — من الخريطة المحسوبة مسبقاً
         thermo_val = thermocline_map[i, j]
         thermo_list.append(round(float(thermo_val), 1) if not np.isnan(thermo_val) else None)
 
+        # Find nearest grid cell for front intensity
+        best_dist = np.inf
+        best_intensity = 0.0
+        for gi, gj in [(i, j) for i in range(nlat) for j in range(nlon)]:
+            d = haversine(lat, lon, lat_grid[gi], lon_grid[gj])
+            if d < best_dist:
+                best_dist = d
+                best_intensity = grad_mag[gi, gj] if not np.isnan(grad_mag[gi, gj]) else 0.0
+        intensity = min(1.0, best_intensity / 0.3)
+        front_list.append(round(intensity, 3))
+
 # =====================================================
-# حفظ data.json
+# Save data.json
 # =====================================================
 output = {
     "timestamp": yesterday,
@@ -233,7 +305,8 @@ output = {
     "oxygen": o2_list,
     "transparency": kd_list,
     "currentSpeed": curr_list,
-    "thermocline": thermo_list
+    "thermocline": thermo_list,
+    "frontIntensity": front_list
 }
 
 with open("data.json", "w", encoding="utf-8") as f:
@@ -241,6 +314,4 @@ with open("data.json", "w", encoding="utf-8") as f:
 
 print(f"Saved {len(lat_list)} points")
 print("data.json saved successfully")
-print(f"Sample oxygen (ml/l): {o2_list[:3]}")
-print(f"Sample transparency/Secchi (m): {kd_list[:3]}")
-print(f"Sample currentSpeed (knots): {curr_list[:3]}")
+print(f"Sample front intensity: {front_list[:3]}")
