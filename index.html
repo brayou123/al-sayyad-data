@@ -8,7 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=IBM+Plex+Mono:wght@400;500&family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
-  /* ... (نفس الـ CSS السابق، لم يتغير) ... */
+  /* (same CSS – unchanged) */
   :root {
     --bg: #060d14;
     --surface: #0b1623;
@@ -31,7 +31,6 @@
   .leaflet-tile-pane { filter: brightness(0.52) saturate(0.65) hue-rotate(195deg); }
   .leaflet-control-zoom { margin-bottom: calc(var(--sheet-collapsed) + 16px) !important; }
 
-  /* ═══ BOTTOM SHEET ═══ */
   #sheet {
     position: fixed; left: 0; right: 0; bottom: 0;
     z-index: 100;
@@ -87,7 +86,6 @@
   }
   #sheet.collapsed #sheet-body { overflow: hidden; }
 
-  /* ═══ NAV BAR (collapsed state) ═══ */
   #nav-bar {
     display: none; align-items: center; justify-content: space-between;
     padding: 0 18px; height: var(--sheet-collapsed); flex-shrink: 0;
@@ -109,7 +107,6 @@
   }
   #expand-btn:hover { border-color: var(--accent); color: var(--accent); }
 
-  /* ═══ ACCORDION ═══ */
   .acc-header {
     display: flex; align-items: center; justify-content: space-between;
     padding: 11px 18px; cursor: pointer; user-select: none;
@@ -127,7 +124,6 @@
   .acc-body { max-height: 0; overflow: hidden; transition: max-height 0.35s ease; }
   .acc-body.open { max-height: 3000px; }
 
-  /* ═══ SPECIES CARDS (checkbox + expand) ═══ */
   .species-list { padding: 8px 12px; display: flex; flex-direction: column; gap: 5px; }
   .species-card { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; transition: border-color 0.2s; }
   .species-card.selected { border-color: var(--card-color, var(--accent)); }
@@ -152,7 +148,6 @@
   .species-chevron { font-size: 8px; color: var(--text-dim); margin-left: 5px; transition: transform 0.22s; }
   .species-card.expanded .species-chevron { transform: rotate(180deg); }
 
-  /* SLIDERS */
   .sliders-body { max-height: 0; overflow: hidden; transition: max-height 0.28s ease; background: var(--bg); }
   .species-card.expanded .sliders-body { max-height: 900px; }
   .sliders-inner { padding: 12px; display: flex; flex-direction: column; gap: 13px; }
@@ -176,7 +171,6 @@
   }
   input[type=range]::-webkit-slider-thumb:active { transform: scale(1.3); cursor: grabbing; }
 
-  /* ADD SPECIES */
   .add-species-btn {
     margin: 6px 12px; padding: 10px;
     border: 1px dashed var(--border); border-radius: var(--radius);
@@ -186,7 +180,24 @@
   }
   .add-species-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(0,212,255,0.04); }
 
-  /* SEARCH */
+  /* Capture button */
+  .capture-btn {
+    margin: 0 12px 8px 12px;
+    padding: 10px;
+    background: #2a5f4e;
+    border: none;
+    border-radius: var(--radius);
+    color: white;
+    font-family: 'Syne', sans-serif;
+    font-size: 11px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: opacity 0.2s;
+    width: calc(100% - 24px);
+    text-align: center;
+  }
+  .capture-btn:hover { opacity: 0.85; }
+
   .search-wrap { padding: 12px 12px 8px; }
   #search-btn {
     width: 100%; padding: 13px;
@@ -214,10 +225,8 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* ═══ CANVAS ═══ */
   #hotspot-canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 50; }
 
-  /* ═══ POPUP ═══ */
   #hotspot-popup {
     position: fixed;
     background: rgba(6,13,20,0.96); border: 1px solid var(--border);
@@ -234,7 +243,6 @@
   .popup-vars { color: var(--text-dim); font-size: 9px; line-height: 1.8; border-top: 1px solid var(--border); padding-top: 7px; }
   .popup-var-item::before { content: '· '; color: var(--accent); }
 
-  /* ═══ MODAL ═══ */
   #modal-overlay {
     display: none; position: fixed; inset: 0;
     background: rgba(0,0,0,0.75); z-index: 1000;
@@ -320,6 +328,7 @@
     <div class="acc-body open" id="species-acc-body">
       <div class="species-list" id="species-list"></div>
       <button class="add-species-btn" id="add-species-btn">+ Add Species</button>
+      <button class="capture-btn" id="capture-spot-btn">📌 Capture Current Spot</button>
       <div class="search-wrap">
         <button id="search-btn" disabled>SEARCH HOTSPOTS</button>
       </div>
@@ -351,25 +360,32 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-// ══════════════════════════════════════════════════════
+// ============================================================
 //  CONFIG & GLOBALS
-// ══════════════════════════════════════════════════════
-const SLIDER_VARS = [
+// ============================================================
+
+// All variables (including thermocline) for modal
+const ALL_VARS = [
   { key:'temperature',  label:'Temperature',      unit:'°C',    min:0,  max:35,  step:0.5 },
   { key:'chlorophyll',  label:'Chlorophyll',      unit:'mg/m³', min:0,  max:10,  step:0.1 },
   { key:'oxygen',       label:'Dissolved Oxygen', unit:'ml/l',  min:0,  max:12,  step:0.1 },
   { key:'salinity',     label:'Salinity',         unit:'ppt',   min:30, max:42,  step:0.1 },
   { key:'transparency', label:'Transparency',     unit:'m',     min:0,  max:50,  step:1   },
-  { key:'currentSpeed', label:'Current Speed',    unit:'kn',    min:0,  max:5,   step:0.1 }
+  { key:'currentSpeed', label:'Current Speed',    unit:'kn',    min:0,  max:5,   step:0.1 },
+  { key:'thermocline',  label:'Thermocline Depth', unit:'m',     min:0,  max:100, step:1   }
 ];
 
+// User-controllable sliders (exclude thermocline)
+const SLIDER_VARS = ALL_VARS.filter(v => v.key !== 'thermocline');
+
+// Predefined species with thermocline ranges
 const PREDEFINED = [
   { id:'sardine', name:'Sardine', sci:'Sardina pilchardus',     color:'#00aaff',
-    ranges:{ temperature:[13,20], chlorophyll:[0.5,4.0], oxygen:[5.5,8.5], salinity:[36,38.5], transparency:[5,25],  currentSpeed:[0,1.0] } },
+    ranges:{ temperature:[13,20], chlorophyll:[0.5,4.0], oxygen:[5.5,8.5], salinity:[36,38.5], transparency:[5,25],  currentSpeed:[0,1.0], thermocline:[20,40] } },
   { id:'anchovy', name:'Anchovy', sci:'Engraulis encrasicolus', color:'#ff4455',
-    ranges:{ temperature:[14,23], chlorophyll:[1.0,5.0], oxygen:[5.0,8.0], salinity:[36,38.5], transparency:[5,20],  currentSpeed:[0,1.5] } },
+    ranges:{ temperature:[14,23], chlorophyll:[1.0,5.0], oxygen:[5.0,8.0], salinity:[36,38.5], transparency:[5,20],  currentSpeed:[0,1.5], thermocline:[15,35] } },
   { id:'lacha',   name:'Lacha',   sci:'Sardinella aurita',      color:'#22cc77',
-    ranges:{ temperature:[20,27], chlorophyll:[0.3,2.5], oxygen:[4.5,8.0], salinity:[36,39],   transparency:[3,18],  currentSpeed:[0,2.0] } }
+    ranges:{ temperature:[20,27], chlorophyll:[0.3,2.5], oxygen:[4.5,8.0], salinity:[36,39],   transparency:[3,18],  currentSpeed:[0,2.0], thermocline:[25,45] } }
 ];
 
 const COLOR_PALETTE = ['#00aaff','#ff4455','#22cc77','#ffaa00','#cc44ff','#ff6600','#00ffcc','#ff44aa','#00eebb','#44aaff'];
@@ -383,11 +399,23 @@ let species = JSON.parse(localStorage.getItem('hs_species') || 'null')
   || PREDEFINED.map(s => ({ ...s, ranges: { ...s.ranges }, selected: false, expanded: false }));
 let modalColor = COLOR_PALETTE[0];
 let modalRanges = {};
-SLIDER_VARS.forEach(v => modalRanges[v.key] = [+(v.min+(v.max-v.min)*0.2).toFixed(1), +(v.min+(v.max-v.min)*0.6).toFixed(1)]);
+ALL_VARS.forEach(v => modalRanges[v.key] = [+(v.min+(v.max-v.min)*0.2).toFixed(1), +(v.min+(v.max-v.min)*0.6).toFixed(1)]);
 
-// ══════════════════════════════════════════════════════
+// Weighted variables (thermocline and front are fixed weights)
+const VAR_WEIGHTS = {
+  temperature:  0.25,
+  chlorophyll:  0.20,
+  oxygen:       0.15,
+  salinity:     0.08,
+  transparency: 0.07,
+  currentSpeed: 0.05,
+  thermocline:  0.12,
+  front:        0.08
+};
+
+// ============================================================
 //  UTILITIES
-// ══════════════════════════════════════════════════════
+// ============================================================
 function haversineKm(la1, lo1, la2, lo2) {
   const R = 6371, dL = (la2-la1)*Math.PI/180, dO = (lo2-lo1)*Math.PI/180;
   const a = Math.sin(dL/2)**2 + Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dO/2)**2;
@@ -399,16 +427,15 @@ function hexA(hex, alpha) {
   return `rgba(${r},${g},${b},${Math.max(0,Math.min(1,alpha)).toFixed(2)})`;
 }
 
-// ══════════════════════════════════════════════════════
-//  DATA LOADING (columnar JSON → points array)
-// ══════════════════════════════════════════════════════
+// ============================================================
+//  DATA LOADING & PREPROCESSING (Front intensity via Sobel grid)
+// ============================================================
 async function loadOceanData() {
   try {
     const response = await fetch('data.json');
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const json = await response.json();
-    
-    // Convert columnar format to array of point objects
+
     const latArr = json.lat;
     const lonArr = json.lon;
     const tempArr = json.temperature;
@@ -418,7 +445,7 @@ async function loadOceanData() {
     const transArr = json.transparency;
     const currArr = json.currentSpeed;
     const thermoArr = json.thermocline;
-    
+
     const n = latArr.length;
     const points = [];
     for (let i = 0; i < n; i++) {
@@ -434,9 +461,13 @@ async function loadOceanData() {
         thermocline: thermoArr[i]
       });
     }
-    
+
     oceanData = { timestamp: json.timestamp, resolution_km: json.resolution_km, points: points };
     console.log(`Loaded ${oceanData.points.length} points from ${oceanData.timestamp}`);
+
+    // Precompute front intensity for all points (Sobel on regular grid)
+    precomputeFrontIntensity();
+
     if (userLat) document.getElementById('search-btn').disabled = false;
   } catch (err) {
     console.error('Failed to load ocean data:', err);
@@ -444,19 +475,112 @@ async function loadOceanData() {
   }
 }
 
-// ══════════════════════════════════════════════════════
-//  SPECIES MATCHING — أوزان بيولوجية
-// ══════════════════════════════════════════════════════
-const VAR_WEIGHTS = {
-  temperature:  0.30,
-  chlorophyll:  0.25,
-  oxygen:       0.20,
-  salinity:     0.10,
-  transparency: 0.08,
-  currentSpeed: 0.07
-};
+function precomputeFrontIntensity() {
+  if (!oceanData || !oceanData.points.length) return;
 
-function matchSpecies(point, ranges) {
+  const points = oceanData.points;
+  // Determine grid bounds and step (0.05 deg ~ 5.5 km)
+  let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+  points.forEach(p => {
+    if (p.lat < minLat) minLat = p.lat;
+    if (p.lat > maxLat) maxLat = p.lat;
+    if (p.lon < minLon) minLon = p.lon;
+    if (p.lon > maxLon) maxLon = p.lon;
+  });
+  const step = 0.05;
+  const latSteps = Math.ceil((maxLat - minLat) / step) + 1;
+  const lonSteps = Math.ceil((maxLon - minLon) / step) + 1;
+
+  // Create grid arrays
+  const gridLats = [];
+  const gridLons = [];
+  for (let i = 0; i < latSteps; i++) gridLats.push(minLat + i * step);
+  for (let j = 0; j < lonSteps; j++) gridLons.push(minLon + j * step);
+
+  // Interpolate temperature onto grid using IDW (nearest 8 points within 0.2 deg)
+  const gridTemp = Array(latSteps).fill().map(() => Array(lonSteps).fill(null));
+  const searchRadius = 0.2; // degrees ~22 km
+  for (let i = 0; i < latSteps; i++) {
+    const lat = gridLats[i];
+    for (let j = 0; j < lonSteps; j++) {
+      const lon = gridLons[j];
+      // Find nearby points
+      const nearby = [];
+      points.forEach(p => {
+        if (p.temperature == null) return;
+        const dLat = Math.abs(p.lat - lat);
+        const dLon = Math.abs(p.lon - lon);
+        if (dLat < searchRadius && dLon < searchRadius) {
+          const dist = haversineKm(lat, lon, p.lat, p.lon);
+          if (dist < searchRadius * 111) {
+            nearby.push({ point: p, dist });
+          }
+        }
+      });
+      if (nearby.length === 0) continue;
+      // IDW interpolation
+      let sumW = 0, sumWT = 0;
+      nearby.forEach(n => {
+        const w = 1 / (n.dist + 0.001);
+        sumW += w;
+        sumWT += w * n.point.temperature;
+      });
+      if (sumW > 0) gridTemp[i][j] = sumWT / sumW;
+    }
+  }
+
+  // Sobel operator on grid to compute gradient magnitude (in °C per degree)
+  const gradMag = Array(latSteps).fill().map(() => Array(lonSteps).fill(0));
+  for (let i = 1; i < latSteps - 1; i++) {
+    for (let j = 1; j < lonSteps - 1; j++) {
+      if (gridTemp[i][j] == null) continue;
+      // Sobel kernels
+      const gx = (gridTemp[i-1][j+1] ?? gridTemp[i][j]) - (gridTemp[i-1][j-1] ?? gridTemp[i][j]) +
+                 2 * ((gridTemp[i][j+1] ?? gridTemp[i][j]) - (gridTemp[i][j-1] ?? gridTemp[i][j])) +
+                 (gridTemp[i+1][j+1] ?? gridTemp[i][j]) - (gridTemp[i+1][j-1] ?? gridTemp[i][j]);
+      const gy = (gridTemp[i+1][j-1] ?? gridTemp[i][j]) - (gridTemp[i-1][j-1] ?? gridTemp[i][j]) +
+                 2 * ((gridTemp[i+1][j] ?? gridTemp[i][j]) - (gridTemp[i-1][j] ?? gridTemp[i][j])) +
+                 (gridTemp[i+1][j+1] ?? gridTemp[i][j]) - (gridTemp[i-1][j+1] ?? gridTemp[i][j]);
+      // Convert to °C per km: 1 degree latitude ≈ 111 km, 1 degree longitude ≈ 111*cos(lat)
+      const latRad = lat * Math.PI/180;
+      const kmPerDegLat = 111;
+      const kmPerDegLon = 111 * Math.cos(latRad);
+      const gradX = gx / (2 * step) / kmPerDegLon; // °C/km
+      const gradY = gy / (2 * step) / kmPerDegLat;
+      gradMag[i][j] = Math.sqrt(gradX*gradX + gradY*gradY);
+    }
+  }
+
+  // Assign front intensity to each original point (0-1, scaled to 0.3 °C/km = strong front)
+  points.forEach(p => {
+    // Find nearest grid cell
+    let bestIdx = -1, bestJ = -1, minDist = Infinity;
+    for (let i = 0; i < latSteps; i++) {
+      const dLat = Math.abs(p.lat - gridLats[i]);
+      if (dLat > step*1.2) continue;
+      for (let j = 0; j < lonSteps; j++) {
+        const dLon = Math.abs(p.lon - gridLons[j]);
+        if (dLon > step*1.2) continue;
+        const dist = haversineKm(p.lat, p.lon, gridLats[i], gridLons[j]);
+        if (dist < minDist) {
+          minDist = dist;
+          bestIdx = i; bestJ = j;
+        }
+      }
+    }
+    let intensity = 0;
+    if (bestIdx !== -1 && gradMag[bestIdx][bestJ] != null) {
+      intensity = Math.min(1, gradMag[bestIdx][bestJ] / 0.3);
+    }
+    p.frontIntensity = intensity;
+  });
+  console.log('Front intensity precomputed');
+}
+
+// ============================================================
+//  SPECIES MATCHING with thermocline & front
+// ============================================================
+function matchSpecies(point, ranges, frontIntensity, thermoclineValue) {
   const varList = [
     { key:'temperature',  label:'Temperature'   },
     { key:'chlorophyll',  label:'Chlorophyll'   },
@@ -466,10 +590,12 @@ function matchSpecies(point, ranges) {
     { key:'currentSpeed', label:'Current Speed' }
   ];
   let weightedScore = 0;
-  let totalWeight   = 0;
+  let totalWeight = 0;
   const matched = [];
+
+  // User-adjustable variables
   for (const v of varList) {
-    const w     = VAR_WEIGHTS[v.key];
+    const w = VAR_WEIGHTS[v.key];
     const range = ranges[v.key];
     totalWeight += w;
     if (!range) { weightedScore += w; continue; }
@@ -484,36 +610,41 @@ function matchSpecies(point, ranges) {
       weightedScore += w * Math.max(0, 1 - (val < lo ? lo - val : val - hi) / margin);
     }
   }
-  const td = point.thermocline != null ? point.thermocline : 35;
-  const thermoFactor = (td >= 15 && td <= 80) ? 1.08 : 0.88;
-  const score = Math.min(1, (weightedScore / totalWeight) * thermoFactor);
-  return { score, matchedVars: matched };
+
+  // Thermocline (fixed weight)
+  const thermoWeight = VAR_WEIGHTS.thermocline;
+  let thermoScore = 1;
+  if (ranges.thermocline && thermoclineValue != null) {
+    const [lo, hi] = ranges.thermocline;
+    if (thermoclineValue >= lo && thermoclineValue <= hi) {
+      thermoScore = 1;
+    } else {
+      const margin = (hi - lo) * 0.3;
+      const dist = thermoclineValue < lo ? lo - thermoclineValue : thermoclineValue - hi;
+      thermoScore = Math.max(0, 1 - dist / margin);
+    }
+  } else if (!ranges.thermocline) {
+    // If no thermocline range defined, treat as perfect match (no weight)
+    thermoScore = 1;
+  }
+  weightedScore += thermoScore * thermoWeight;
+  totalWeight += thermoWeight;
+
+  // Front intensity (fixed weight)
+  const frontWeight = VAR_WEIGHTS.front;
+  const frontScore = frontIntensity != null ? frontIntensity : 0.5; // default if not computed
+  weightedScore += frontScore * frontWeight;
+  totalWeight += frontWeight;
+
+  const finalScore = Math.min(1, weightedScore / totalWeight);
+  return { score: finalScore, matchedVars: matched };
 }
 
-// ══════════════════════════════════════════════════════
-//  FRONT DETECTION — كشف الجبهات البيئية
-// ══════════════════════════════════════════════════════
-function computeFrontBonus(point, allPoints) {
-  const neighbors = allPoints.filter(p =>
-    p !== point &&
-    Math.abs(p.lat - point.lat) < 0.12 &&
-    Math.abs(p.lon - point.lon) < 0.12 &&
-    p.temperature != null
-  );
-  if (neighbors.length < 2 || point.temperature == null) return 1.0;
-  const temps = neighbors.map(p => p.temperature);
-  const gradient = Math.max(...temps) - Math.min(...temps);
-  if (gradient > 1.2) return 1.12;
-  if (gradient > 0.8) return 1.07;
-  if (gradient > 0.4) return 1.03;
-  return 1.0;
-}
-
-// ══════════════════════════════════════════════════════
-//  CLUSTERING — دمج النقاط في مناطق صيد
-// ══════════════════════════════════════════════════════
+// ============================================================
+//  CLUSTERING — adjusted for small-scale hotspots
+// ============================================================
 function clusterHotspots(rawPoints) {
-  const CLUSTER_RADIUS_KM = 15; // دمج النقاط ضمن 15km
+  const CLUSTER_RADIUS_KM = 1.5; // merge points within 1.5 km
   const used = new Array(rawPoints.length).fill(false);
   const clusters = [];
 
@@ -531,17 +662,15 @@ function clusterHotspots(rawPoints) {
       }
     }
 
-    // مركز الثقل
-    const avgLat  = members.reduce((s, p) => s + p.lat, 0) / members.length;
-    const avgLon  = members.reduce((s, p) => s + p.lon, 0) / members.length;
+    const avgLat = members.reduce((s, p) => s + p.lat, 0) / members.length;
+    const avgLon = members.reduce((s, p) => s + p.lon, 0) / members.length;
     const avgMatch = members.reduce((s, p) => s + p.match, 0) / members.length;
     const best = members.reduce((a, b) => b.match > a.match ? b : a);
 
-    // حساب نصف القطر التقريبي للمنطقة
-    const radiusKm = members.length === 1 ? 8 :
-      Math.max(...members.map(p => haversineKm(avgLat, avgLon, p.lat, p.lon))) + 6;
+    // Radius: single point = 0.5 km, else max distance from centroid (no extra margin)
+    const radiusKm = members.length === 1 ? 0.5 :
+      Math.max(...members.map(p => haversineKm(avgLat, avgLon, p.lat, p.lon)));
 
-    // جمع كل الأنواع الموجودة في الـ cluster
     const speciesMap = {};
     members.forEach(p => {
       (p.allSpecies || [{ name: p.name, color: p.color, match: p.match }]).forEach(sp => {
@@ -553,16 +682,16 @@ function clusterHotspots(rawPoints) {
     const allSpecies = Object.values(speciesMap).sort((a, b) => b.match - a.match);
 
     clusters.push({
-      lat:        avgLat,
-      lon:        avgLon,
-      match:      +avgMatch.toFixed(1),
-      radiusKm:   +radiusKm.toFixed(1),
-      count:      members.length,
-      color:      best.color,
-      name:       best.name,
+      lat: avgLat,
+      lon: avgLon,
+      match: +avgMatch.toFixed(1),
+      radiusKm: +radiusKm.toFixed(1),
+      count: members.length,
+      color: best.color,
+      name: best.name,
       allSpecies,
-      isFront:    members.some(p => p.isFront),
-      pointData:  best.pointData
+      isFront: members.some(p => p.frontIntensity > 0.6),
+      pointData: best.pointData
     });
   }
 
@@ -570,12 +699,12 @@ function clusterHotspots(rawPoints) {
   return clusters;
 }
 
-// ══════════════════════════════════════════════════════
+// ============================================================
 //  SEARCH
-// ══════════════════════════════════════════════════════
+// ============================================================
 function searchHotspots(selectedSpecies) {
   if (!oceanData || !oceanData.points) throw new Error('Ocean data not loaded');
-  const radiusKm  = 100;
+  const radiusKm = 100;
   const pointsInRange = oceanData.points.filter(p =>
     haversineKm(userLat, userLon, p.lat, p.lon) <= radiusKm
   );
@@ -583,19 +712,21 @@ function searchHotspots(selectedSpecies) {
   const rawHotspots = [];
 
   for (const point of pointsInRange) {
-    const frontBonus  = computeFrontBonus(point, pointsInRange);
     const speciesMatches = [];
 
-    // ← لا break — نقيّم كل الأنواع
     for (const sp of selectedSpecies) {
-      const { score, matchedVars } = matchSpecies(point, sp.ranges);
-      const finalScore = Math.min(1, score * frontBonus);
-      if (finalScore >= 0.5) {
+      const { score, matchedVars } = matchSpecies(
+        point,
+        sp.ranges,
+        point.frontIntensity,
+        point.thermocline
+      );
+      if (score >= 0.5) {
         speciesMatches.push({
-          name:  sp.name,
+          name: sp.name,
           color: sp.color,
-          match: +(finalScore * 100).toFixed(1),
-          vars:  matchedVars
+          match: +(score * 100).toFixed(1),
+          vars: matchedVars
         });
       }
     }
@@ -605,24 +736,23 @@ function searchHotspots(selectedSpecies) {
     const best = speciesMatches[0];
 
     rawHotspots.push({
-      lat:        point.lat,
-      lon:        point.lon,
-      match:      best.match,
-      color:      best.color,
-      name:       best.name,
+      lat: point.lat,
+      lon: point.lon,
+      match: best.match,
+      color: best.color,
+      name: best.name,
       allSpecies: speciesMatches,
-      isFront:    frontBonus > 1.03,
-      pointData:  point
+      isFront: point.frontIntensity > 0.6,
+      pointData: point
     });
   }
 
-  // دمج النقاط في مناطق
   return clusterHotspots(rawHotspots);
 }
 
-// ══════════════════════════════════════════════════════
-//  MAP & GPS (unchanged)
-// ══════════════════════════════════════════════════════
+// ============================================================
+//  MAP & GPS
+// ============================================================
 map = L.map('map', { zoomControl: false, attributionControl: false }).setView([36.7, 3.1], 7);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 L.control.zoom({ position: 'bottomright' }).addTo(map);
@@ -656,9 +786,9 @@ function initGPS() {
 function setGPSText(t) { document.getElementById('gps-text').textContent = t; }
 initGPS();
 
-// ══════════════════════════════════════════════════════
-//  DRAW HOTSPOTS (unchanged animation)
-// ══════════════════════════════════════════════════════
+// ============================================================
+//  DRAW HOTSPOTS (animation)
+// ============================================================
 let phase = 0;
 function drawHotspots() {
   cancelAnimationFrame(animFrame);
@@ -671,17 +801,13 @@ function drawHotspots() {
 
     hotspotResults.forEach(h => {
       const center = map.latLngToContainerPoint([h.lat, h.lon]);
-
-      // حساب حجم الدائرة بناءً على radiusKm الفعلي على الخريطة
-      const edgePt  = map.latLngToContainerPoint([
+      const edgePt = map.latLngToContainerPoint([
         h.lat, h.lon + (h.radiusKm / 111) * (1 / Math.cos(h.lat * Math.PI / 180))
       ]);
       const pxRadius = Math.max(18, Math.hypot(edgePt.x - center.x, edgePt.y - center.y));
-
       const pulse = 0.75 + 0.25 * Math.sin(phase + h.lat * 6 + h.lon * 4);
       const species = h.allSpecies || [{ color: h.color, match: h.match }];
 
-      // طبقة خارجية لكل نوع (حلقات بألوان مختلفة)
       species.forEach((sp, idx) => {
         const ringR = pxRadius * (1 - idx * 0.18);
         if (ringR < 8) return;
@@ -696,7 +822,6 @@ function drawHotspots() {
         ctx.fill();
       });
 
-      // حدود المنطقة — خط دائري
       ctx.beginPath();
       ctx.arc(center.x, center.y, pxRadius, 0, Math.PI * 2);
       ctx.strokeStyle = hexA(h.color, 0.35 * pulse);
@@ -705,7 +830,6 @@ function drawHotspots() {
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // مؤشر الجبهة — هالة ذهبية
       if (h.isFront) {
         ctx.beginPath();
         ctx.arc(center.x, center.y, pxRadius + 5 * pulse, 0, Math.PI * 2);
@@ -714,7 +838,6 @@ function drawHotspots() {
         ctx.stroke();
       }
 
-      // النقطة المركزية
       const dotR = 5 + 3 * pulse;
       ctx.beginPath();
       ctx.arc(center.x, center.y, dotR, 0, Math.PI * 2);
@@ -724,7 +847,6 @@ function drawHotspots() {
       ctx.fill();
       ctx.shadowBlur  = 0;
 
-      // نسبة المطابقة فوق النقطة
       if (map.getZoom() >= 8) {
         ctx.font      = 'bold 10px IBM Plex Mono, monospace';
         ctx.fillStyle = hexA(h.color, 0.9);
@@ -737,9 +859,9 @@ function drawHotspots() {
   loop();
 }
 
-// ══════════════════════════════════════════════════════
-//  POPUP (unchanged)
-// ══════════════════════════════════════════════════════
+// ============================================================
+//  POPUP
+// ============================================================
 map.getContainer().addEventListener('click', e => {
   const mx = e.clientX, my = e.clientY;
   const popup = document.getElementById('hotspot-popup');
@@ -764,7 +886,6 @@ map.getContainer().addEventListener('click', e => {
     popup.style.top  = top  + 'px';
     popup.style.borderColor = hit.color;
 
-    // الأنواع المطابقة
     const nameEl = document.getElementById('popup-name');
     if (hit.allSpecies && hit.allSpecies.length > 1) {
       nameEl.innerHTML = hit.allSpecies
@@ -775,12 +896,10 @@ map.getContainer().addEventListener('click', e => {
       nameEl.textContent  = hit.name;
     }
 
-    // نسبة المطابقة
     const pctEl = document.getElementById('popup-pct');
     pctEl.style.color = hit.color;
     pctEl.textContent = hit.match.toFixed(0) + '% match' + (hit.isFront ? '  🌊⚡ Front' : '');
 
-    // المسافة + عدد النقاط
     if (userLat) {
       const km = haversineKm(userLat, userLon, hit.lat, hit.lon);
       document.getElementById('popup-dist').textContent =
@@ -788,7 +907,6 @@ map.getContainer().addEventListener('click', e => {
         `  ·  ~${hit.radiusKm} km zone  ·  ${hit.count} pts`;
     }
 
-    // القيم البيئية الفعلية
     const varsEl = document.getElementById('popup-vars');
     varsEl.innerHTML = '';
     const pd = hit.pointData || {};
@@ -815,9 +933,9 @@ map.getContainer().addEventListener('click', e => {
   }
 });
 
-// ══════════════════════════════════════════════════════
-//  SPECIES UI (checkbox + expand)
-// ══════════════════════════════════════════════════════
+// ============================================================
+//  SPECIES UI
+// ============================================================
 function renderSpecies() {
   const list = document.getElementById('species-list');
   list.innerHTML = '';
@@ -840,15 +958,13 @@ function renderSpecies() {
       <div class="sliders-body">
         <div class="sliders-inner" id="sliders-${i}"></div>
       </div>`;
-    // Handle checkbox click (stop propagation to header)
     const chk = card.querySelector('.species-checkbox');
     chk.addEventListener('click', (e) => {
       e.stopPropagation();
       sp.selected = chk.checked;
       saveSpecies();
-      renderSpecies();  // re-render to update class
+      renderSpecies();
     });
-    // Header click toggles expansion (only)
     const header = card.querySelector('.species-card-header');
     header.addEventListener('click', (e) => {
       if (e.target === chk) return;
@@ -895,28 +1011,28 @@ function buildSliders(container, sp, idx) {
 
 function saveSpecies() { localStorage.setItem('hs_species', JSON.stringify(species)); }
 
-// ══════════════════════════════════════════════════════
-//  SEARCH (local)
-// ══════════════════════════════════════════════════════
+// ============================================================
+//  SEARCH BUTTON
+// ============================================================
 document.getElementById('search-btn').addEventListener('click', async () => {
   const selected = species.filter(s => s.selected);
   if (!selected.length) {
-    document.getElementById('results-text').textContent = 'اختر نوعاً واحداً على الأقل.';
+    document.getElementById('results-text').textContent = 'Select at least one species.';
     return;
   }
   if (!userLat) {
-    document.getElementById('results-text').textContent = 'بانتظار تحديد الموقع...';
+    document.getElementById('results-text').textContent = 'Waiting for location...';
     return;
   }
   if (!oceanData) {
-    document.getElementById('results-text').textContent = 'جاري تحميل البيانات البيئية...';
+    document.getElementById('results-text').textContent = 'Loading environmental data...';
     return;
   }
 
   const btn = document.getElementById('search-btn');
   btn.disabled = true;
-  btn.textContent = 'جاري البحث...';
-  document.getElementById('results-text').innerHTML = '<div class="spinner"></div> تحليل البيانات...';
+  btn.textContent = 'Searching...';
+  document.getElementById('results-text').innerHTML = '<div class="spinner"></div> Analyzing data...';
 
   try {
     const hotspots = searchHotspots(selected);
@@ -926,14 +1042,79 @@ document.getElementById('search-btn').addEventListener('click', async () => {
     drawHotspots();
     collapseSheet();
   } catch (err) {
-    document.getElementById('results-text').textContent = `خطأ: ${err.message}`;
+    document.getElementById('results-text').textContent = `Error: ${err.message}`;
   } finally {
     btn.disabled = false;
     btn.textContent = 'SEARCH HOTSPOTS';
   }
 });
 
-// ── COLLAPSE / EXPAND (unchanged) ──
+// ============================================================
+//  CAPTURE CURRENT SPOT
+// ============================================================
+async function captureCurrentSpot() {
+  if (!userLat || !userLon) {
+    alert("Location not available. Please enable GPS.");
+    return;
+  }
+  if (!oceanData) {
+    alert("Environmental data not loaded yet.");
+    return;
+  }
+
+  // Find nearest point
+  let minDist = Infinity;
+  let nearest = null;
+  for (let p of oceanData.points) {
+    const d = haversineKm(userLat, userLon, p.lat, p.lon);
+    if (d < minDist) {
+      minDist = d;
+      nearest = p;
+    }
+  }
+  if (!nearest) {
+    alert("No nearby environmental data found.");
+    return;
+  }
+
+  // Build ranges around the captured values (adjustable margins)
+  const ranges = {};
+  ALL_VARS.forEach(v => {
+    const val = nearest[v.key];
+    if (val == null) {
+      ranges[v.key] = [v.min, v.max]; // fallback
+    } else {
+      let low = val * 0.85;
+      let high = val * 1.15;
+      if (v.key === 'salinity') { low = val * 0.98; high = val * 1.02; }
+      if (v.key === 'currentSpeed') { low = Math.max(0, val * 0.5); high = val * 1.8; }
+      if (v.key === 'thermocline') { low = Math.max(0, val * 0.7); high = val * 1.3; }
+      low = Math.max(v.min, Math.min(v.max, low));
+      high = Math.max(v.min, Math.min(v.max, high));
+      ranges[v.key] = [Math.round(low * 10) / 10, Math.round(high * 10) / 10];
+    }
+  });
+
+  const newName = `Captured ${species.filter(s => s.name.startsWith('Captured')).length + 1}`;
+  species.push({
+    id: 'captured_' + Date.now(),
+    name: newName,
+    sci: `Recorded at ${userLat.toFixed(3)}, ${userLon.toFixed(3)}`,
+    color: COLOR_PALETTE[species.length % COLOR_PALETTE.length],
+    ranges: ranges,
+    selected: true,
+    expanded: true
+  });
+  saveSpecies();
+  renderSpecies();
+  alert(`✅ New species "${newName}" added based on current location.\nYou can now search for similar spots.`);
+}
+
+document.getElementById('capture-spot-btn').addEventListener('click', captureCurrentSpot);
+
+// ============================================================
+//  SHEET COLLAPSE/EXPAND
+// ============================================================
 function collapseSheet() {
   const sheet = document.getElementById('sheet');
   sheet.style.height = '';
@@ -947,7 +1128,9 @@ document.getElementById('expand-btn').addEventListener('click', () => {
   sheet.style.height = 'var(--sheet-mid)';
 });
 
-// ── DRAG HANDLE (unchanged) ──
+// ============================================================
+//  DRAG HANDLE
+// ============================================================
 (function () {
   const sheet = document.getElementById('sheet');
   const handle = document.getElementById('drag-handle');
@@ -984,9 +1167,9 @@ document.getElementById('expand-btn').addEventListener('click', () => {
   window.addEventListener('mouseup',    onEnd);
 })();
 
-// ══════════════════════════════════════════════════════
-//  ADD SPECIES MODAL (unchanged logic)
-// ══════════════════════════════════════════════════════
+// ============================================================
+//  MODAL (Add Species)
+// ============================================================
 function buildColorRow() {
   const row = document.getElementById('color-row'); row.innerHTML = '';
   COLOR_PALETTE.forEach(c => {
@@ -997,9 +1180,10 @@ function buildColorRow() {
     row.appendChild(chip);
   });
 }
+
 function buildModalSliders() {
   const cont = document.getElementById('modal-sliders'); cont.innerHTML = '';
-  SLIDER_VARS.forEach(v => {
+  ALL_VARS.forEach(v => {
     const [mn, mx] = modalRanges[v.key];
     const row = document.createElement('div');
     row.className = 'slider-row'; row.style.setProperty('--card-color', modalColor);
@@ -1023,35 +1207,50 @@ function buildModalSliders() {
     rMin.addEventListener('input', upd); rMax.addEventListener('input', upd); upd();
   });
 }
+
 document.getElementById('add-species-btn').addEventListener('click', () => {
   modalColor = COLOR_PALETTE[species.length % COLOR_PALETTE.length];
-  modalRanges = JSON.parse(JSON.stringify(SLIDER_VARS.reduce((acc,v) => { acc[v.key] = [v.min+(v.max-v.min)*0.2, v.min+(v.max-v.min)*0.6]; return acc; }, {})));
+  ALL_VARS.forEach(v => {
+    modalRanges[v.key] = [+(v.min+(v.max-v.min)*0.2).toFixed(1), +(v.min+(v.max-v.min)*0.6).toFixed(1)];
+  });
   document.getElementById('modal-name').value = '';
   buildColorRow(); buildModalSliders();
   document.getElementById('modal-overlay').classList.add('show');
 });
+
 document.getElementById('modal-cancel').addEventListener('click', () =>
   document.getElementById('modal-overlay').classList.remove('show'));
+
 document.getElementById('modal-save').addEventListener('click', () => {
   const name = document.getElementById('modal-name').value.trim();
   if (!name) { document.getElementById('modal-name').focus(); return; }
-  species.push({ id:'custom_'+Date.now(), name, sci:'', color:modalColor,
-    ranges: JSON.parse(JSON.stringify(modalRanges)), selected:true, expanded:false });
+  const newRanges = {};
+  ALL_VARS.forEach(v => { newRanges[v.key] = [...modalRanges[v.key]]; });
+  species.push({
+    id: 'custom_'+Date.now(),
+    name: name,
+    sci: '',
+    color: modalColor,
+    ranges: newRanges,
+    selected: true,
+    expanded: false
+  });
   saveSpecies(); renderSpecies();
   document.getElementById('modal-overlay').classList.remove('show');
 });
+
 document.getElementById('modal-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('modal-overlay'))
     document.getElementById('modal-overlay').classList.remove('show');
 });
 
-// ── ACCORDION ──
+// Accordion
 document.getElementById('species-acc-header').addEventListener('click', () => {
   document.getElementById('species-acc-header').classList.toggle('open');
   document.getElementById('species-acc-body').classList.toggle('open');
 });
 
-// Initial render and load data
+// Initial render and data load
 renderSpecies();
 loadOceanData();
 </script>
