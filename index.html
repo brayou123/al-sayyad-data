@@ -428,7 +428,7 @@ function hexA(hex, alpha) {
 }
 
 // ============================================================
-//  DATA LOADING & PREPROCESSING (Front intensity via Sobel grid)
+//  DATA LOADING (now reads frontIntensity from JSON)
 // ============================================================
 async function loadOceanData() {
   try {
@@ -445,6 +445,7 @@ async function loadOceanData() {
     const transArr = json.transparency;
     const currArr = json.currentSpeed;
     const thermoArr = json.thermocline;
+    const frontArr = json.frontIntensity;  // new field
 
     const n = latArr.length;
     const points = [];
@@ -458,123 +459,19 @@ async function loadOceanData() {
         oxygen: o2Arr[i],
         transparency: transArr[i],
         currentSpeed: currArr[i],
-        thermocline: thermoArr[i]
+        thermocline: thermoArr[i],
+        frontIntensity: frontArr ? frontArr[i] : 0.5   // fallback if not present
       });
     }
 
     oceanData = { timestamp: json.timestamp, resolution_km: json.resolution_km, points: points };
     console.log(`Loaded ${oceanData.points.length} points from ${oceanData.timestamp}`);
 
-    // Precompute front intensity for all points (Sobel on regular grid)
-    precomputeFrontIntensity();
-
     if (userLat) document.getElementById('search-btn').disabled = false;
   } catch (err) {
     console.error('Failed to load ocean data:', err);
     document.getElementById('results-text').textContent = '⚠️ Failed to load environmental data. Please refresh.';
   }
-}
-
-function precomputeFrontIntensity() {
-  if (!oceanData || !oceanData.points.length) return;
-
-  const points = oceanData.points;
-  // Determine grid bounds and step (0.05 deg ~ 5.5 km)
-  let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
-  points.forEach(p => {
-    if (p.lat < minLat) minLat = p.lat;
-    if (p.lat > maxLat) maxLat = p.lat;
-    if (p.lon < minLon) minLon = p.lon;
-    if (p.lon > maxLon) maxLon = p.lon;
-  });
-  const step = 0.05;
-  const latSteps = Math.ceil((maxLat - minLat) / step) + 1;
-  const lonSteps = Math.ceil((maxLon - minLon) / step) + 1;
-
-  // Create grid arrays
-  const gridLats = [];
-  const gridLons = [];
-  for (let i = 0; i < latSteps; i++) gridLats.push(minLat + i * step);
-  for (let j = 0; j < lonSteps; j++) gridLons.push(minLon + j * step);
-
-  // Interpolate temperature onto grid using IDW (nearest 8 points within 0.2 deg)
-  const gridTemp = Array(latSteps).fill().map(() => Array(lonSteps).fill(null));
-  const searchRadius = 0.2; // degrees ~22 km
-  for (let i = 0; i < latSteps; i++) {
-    const lat = gridLats[i];
-    for (let j = 0; j < lonSteps; j++) {
-      const lon = gridLons[j];
-      // Find nearby points
-      const nearby = [];
-      points.forEach(p => {
-        if (p.temperature == null) return;
-        const dLat = Math.abs(p.lat - lat);
-        const dLon = Math.abs(p.lon - lon);
-        if (dLat < searchRadius && dLon < searchRadius) {
-          const dist = haversineKm(lat, lon, p.lat, p.lon);
-          if (dist < searchRadius * 111) {
-            nearby.push({ point: p, dist });
-          }
-        }
-      });
-      if (nearby.length === 0) continue;
-      // IDW interpolation
-      let sumW = 0, sumWT = 0;
-      nearby.forEach(n => {
-        const w = 1 / (n.dist + 0.001);
-        sumW += w;
-        sumWT += w * n.point.temperature;
-      });
-      if (sumW > 0) gridTemp[i][j] = sumWT / sumW;
-    }
-  }
-
-  // Sobel operator on grid to compute gradient magnitude (in °C per degree)
-  const gradMag = Array(latSteps).fill().map(() => Array(lonSteps).fill(0));
-  for (let i = 1; i < latSteps - 1; i++) {
-    for (let j = 1; j < lonSteps - 1; j++) {
-      if (gridTemp[i][j] == null) continue;
-      // Sobel kernels
-      const gx = (gridTemp[i-1][j+1] ?? gridTemp[i][j]) - (gridTemp[i-1][j-1] ?? gridTemp[i][j]) +
-                 2 * ((gridTemp[i][j+1] ?? gridTemp[i][j]) - (gridTemp[i][j-1] ?? gridTemp[i][j])) +
-                 (gridTemp[i+1][j+1] ?? gridTemp[i][j]) - (gridTemp[i+1][j-1] ?? gridTemp[i][j]);
-      const gy = (gridTemp[i+1][j-1] ?? gridTemp[i][j]) - (gridTemp[i-1][j-1] ?? gridTemp[i][j]) +
-                 2 * ((gridTemp[i+1][j] ?? gridTemp[i][j]) - (gridTemp[i-1][j] ?? gridTemp[i][j])) +
-                 (gridTemp[i+1][j+1] ?? gridTemp[i][j]) - (gridTemp[i-1][j+1] ?? gridTemp[i][j]);
-      // Convert to °C per km: 1 degree latitude ≈ 111 km, 1 degree longitude ≈ 111*cos(lat)
-      const latRad = lat * Math.PI/180;
-      const kmPerDegLat = 111;
-      const kmPerDegLon = 111 * Math.cos(latRad);
-      const gradX = gx / (2 * step) / kmPerDegLon; // °C/km
-      const gradY = gy / (2 * step) / kmPerDegLat;
-      gradMag[i][j] = Math.sqrt(gradX*gradX + gradY*gradY);
-    }
-  }
-
-  // Assign front intensity to each original point (0-1, scaled to 0.3 °C/km = strong front)
-  points.forEach(p => {
-    // Find nearest grid cell
-    let bestIdx = -1, bestJ = -1, minDist = Infinity;
-    for (let i = 0; i < latSteps; i++) {
-      const dLat = Math.abs(p.lat - gridLats[i]);
-      if (dLat > step*1.2) continue;
-      for (let j = 0; j < lonSteps; j++) {
-        const dLon = Math.abs(p.lon - gridLons[j]);
-        if (dLon > step*1.2) continue;
-        const dist = haversineKm(p.lat, p.lon, gridLats[i], gridLons[j]);
-        if (dist < minDist) {
-          minDist = dist;
-          bestIdx = i; bestJ = j;
-        }
-      }
-    }
-    let intensity = 0;
-    if (bestIdx !== -1 && gradMag[bestIdx][bestJ] != null) {
-      intensity = Math.min(1, gradMag[bestIdx][bestJ] / 0.3);
-    }
-    p.frontIntensity = intensity;
-  });
-  console.log('Front intensity precomputed');
 }
 
 // ============================================================
@@ -624,7 +521,6 @@ function matchSpecies(point, ranges, frontIntensity, thermoclineValue) {
       thermoScore = Math.max(0, 1 - dist / margin);
     }
   } else if (!ranges.thermocline) {
-    // If no thermocline range defined, treat as perfect match (no weight)
     thermoScore = 1;
   }
   weightedScore += thermoScore * thermoWeight;
@@ -632,7 +528,7 @@ function matchSpecies(point, ranges, frontIntensity, thermoclineValue) {
 
   // Front intensity (fixed weight)
   const frontWeight = VAR_WEIGHTS.front;
-  const frontScore = frontIntensity != null ? frontIntensity : 0.5; // default if not computed
+  const frontScore = frontIntensity != null ? frontIntensity : 0.5;
   weightedScore += frontScore * frontWeight;
   totalWeight += frontWeight;
 
