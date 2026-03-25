@@ -8,7 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=IBM+Plex+Mono:wght@400;500&family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
-  /* (same CSS – unchanged) */
+  /* ===== same CSS as before, only added styles for edit/delete icons ===== */
   :root {
     --bg: #060d14;
     --surface: #0b1623;
@@ -148,6 +148,21 @@
   .species-chevron { font-size: 8px; color: var(--text-dim); margin-left: 5px; transition: transform 0.22s; }
   .species-card.expanded .species-chevron { transform: rotate(180deg); }
 
+  /* edit / delete icons */
+  .species-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-left: 8px;
+  }
+  .species-actions span {
+    cursor: pointer;
+    font-size: 14px;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+  }
+  .species-actions span:hover { opacity: 1; }
+
   .sliders-body { max-height: 0; overflow: hidden; transition: max-height 0.28s ease; background: var(--bg); }
   .species-card.expanded .sliders-body { max-height: 900px; }
   .sliders-inner { padding: 12px; display: flex; flex-direction: column; gap: 13px; }
@@ -180,7 +195,6 @@
   }
   .add-species-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(0,212,255,0.04); }
 
-  /* Capture button */
   .capture-btn {
     margin: 0 12px 8px 12px;
     padding: 10px;
@@ -830,12 +844,34 @@ map.getContainer().addEventListener('click', e => {
 });
 
 // ============================================================
-//  SPECIES UI
+//  SPECIES UI (with edit & delete for custom species)
 // ============================================================
+function isPredefinedSpecies(sp) {
+  // Predefined species have ids 'sardine', 'anchovy', 'lacha'
+  return sp.id === 'sardine' || sp.id === 'anchovy' || sp.id === 'lacha';
+}
+
+function deleteSpecies(index) {
+  if (index >= 0 && index < species.length) {
+    species.splice(index, 1);
+    saveSpecies();
+    renderSpecies();
+  }
+}
+
+function renameSpecies(index, newName) {
+  if (index >= 0 && index < species.length) {
+    species[index].name = newName;
+    saveSpecies();
+    renderSpecies();
+  }
+}
+
 function renderSpecies() {
   const list = document.getElementById('species-list');
   list.innerHTML = '';
   species.forEach((sp, i) => {
+    const isPredef = isPredefinedSpecies(sp);
     const card = document.createElement('div');
     card.className = 'species-card' + (sp.selected ? ' selected' : '') + (sp.expanded ? ' expanded' : '');
     card.style.setProperty('--card-color', sp.color);
@@ -845,11 +881,15 @@ function renderSpecies() {
           <input type="checkbox" class="species-checkbox" ${sp.selected ? 'checked' : ''}>
           <div class="species-dot"></div>
           <div>
-            <div class="species-name">${sp.name}</div>
-            ${sp.sci ? `<div class="species-sci">${sp.sci}</div>` : ''}
+            <div class="species-name">${escapeHtml(sp.name)}</div>
+            ${sp.sci ? `<div class="species-sci">${escapeHtml(sp.sci)}</div>` : ''}
           </div>
         </div>
-        <div class="species-chevron">▼</div>
+        <div class="species-actions">
+          ${!isPredef ? `<span class="edit-species" title="Edit name">✏️</span>
+                         <span class="delete-species" title="Delete species">🗑️</span>` : ''}
+          <div class="species-chevron">▼</div>
+        </div>
       </div>
       <div class="sliders-body">
         <div class="sliders-inner" id="sliders-${i}"></div>
@@ -863,13 +903,42 @@ function renderSpecies() {
     });
     const header = card.querySelector('.species-card-header');
     header.addEventListener('click', (e) => {
-      if (e.target === chk) return;
+      // Do not toggle if click on edit/delete buttons
+      if (e.target.classList && (e.target.classList.contains('edit-species') || e.target.classList.contains('delete-species'))) return;
       sp.expanded = !sp.expanded;
       saveSpecies();
       renderSpecies();
     });
+    // Edit button
+    if (!isPredef) {
+      const editBtn = card.querySelector('.edit-species');
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const newName = prompt('Enter new name for this species:', sp.name);
+        if (newName && newName.trim() !== '') {
+          renameSpecies(i, newName.trim());
+        }
+      });
+      const delBtn = card.querySelector('.delete-species');
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (confirm(`Delete species "${sp.name}"? This cannot be undone.`)) {
+          deleteSpecies(i);
+        }
+      });
+    }
     list.appendChild(card);
     if (sp.expanded) buildSliders(document.getElementById(`sliders-${i}`), sp, i);
+  });
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/[&<>]/g, function(m) {
+    if (m === '&') return '&amp;';
+    if (m === '<') return '&lt;';
+    if (m === '>') return '&gt;';
+    return m;
   });
 }
 
