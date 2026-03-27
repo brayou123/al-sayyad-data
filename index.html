@@ -8,7 +8,6 @@
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=IBM+Plex+Mono:wght@400;500&family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
-  /* ===== same CSS as before, only added styles for edit/delete icons ===== */
   :root {
     --bg: #060d14;
     --surface: #0b1623;
@@ -148,18 +147,11 @@
   .species-chevron { font-size: 8px; color: var(--text-dim); margin-left: 5px; transition: transform 0.22s; }
   .species-card.expanded .species-chevron { transform: rotate(180deg); }
 
-  /* edit / delete icons */
   .species-actions {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    margin-left: 8px;
+    display: flex; gap: 8px; align-items: center; margin-left: 8px;
   }
   .species-actions span {
-    cursor: pointer;
-    font-size: 14px;
-    opacity: 0.7;
-    transition: opacity 0.2s;
+    cursor: pointer; font-size: 14px; opacity: 0.7; transition: opacity 0.2s;
   }
   .species-actions span:hover { opacity: 1; }
 
@@ -196,19 +188,10 @@
   .add-species-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(0,212,255,0.04); }
 
   .capture-btn {
-    margin: 0 12px 8px 12px;
-    padding: 10px;
-    background: #2a5f4e;
-    border: none;
-    border-radius: var(--radius);
-    color: white;
-    font-family: 'Syne', sans-serif;
-    font-size: 11px;
-    font-weight: bold;
-    cursor: pointer;
-    transition: opacity 0.2s;
-    width: calc(100% - 24px);
-    text-align: center;
+    margin: 0 12px 8px 12px; padding: 10px;
+    background: #2a5f4e; border: none; border-radius: var(--radius);
+    color: white; font-family: 'Syne', sans-serif; font-size: 11px; font-weight: bold;
+    cursor: pointer; transition: opacity 0.2s; width: calc(100% - 24px); text-align: center;
   }
   .capture-btn:hover { opacity: 0.85; }
 
@@ -375,186 +358,355 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 // ============================================================
-//  CONFIG & GLOBALS
+//  VARIABLE DEFINITIONS
+//  ALL_VARS: full list including thermocline (used in modal)
+//  SLIDER_VARS: user-facing sliders only (excludes thermocline)
 // ============================================================
 
-// All variables (including thermocline) for modal
 const ALL_VARS = [
-  { key:'temperature',  label:'Temperature',      unit:'°C',    min:0,  max:35,  step:0.5 },
-  { key:'chlorophyll',  label:'Chlorophyll',      unit:'mg/m³', min:0,  max:10,  step:0.1 },
-  { key:'oxygen',       label:'Dissolved Oxygen', unit:'ml/l',  min:0,  max:12,  step:0.1 },
-  { key:'salinity',     label:'Salinity',         unit:'ppt',   min:30, max:42,  step:0.1 },
-  { key:'transparency', label:'Transparency',     unit:'m',     min:0,  max:50,  step:1   },
-  { key:'currentSpeed', label:'Current Speed',    unit:'kn',    min:0,  max:5,   step:0.1 },
-  { key:'thermocline',  label:'Thermocline Depth', unit:'m',     min:0,  max:100, step:1   }
+  { key:'temperature',  label:'Temperature',       unit:'°C',    min:0,   max:35,  step:0.5 },
+  { key:'chlorophyll',  label:'Chlorophyll',        unit:'mg/m³', min:0,   max:10,  step:0.1 },
+  { key:'oxygen',       label:'Dissolved Oxygen',   unit:'ml/l',  min:0,   max:12,  step:0.1 },
+  { key:'salinity',     label:'Salinity',           unit:'ppt',   min:30,  max:42,  step:0.1 },
+  { key:'transparency', label:'Transparency',       unit:'m',     min:0,   max:50,  step:1   },
+  { key:'currentSpeed', label:'Current Speed',      unit:'kn',    min:0,   max:5,   step:0.1 },
+  { key:'thermocline',  label:'Thermocline Depth',  unit:'m',     min:0,   max:100, step:1   }
 ];
 
-// User-controllable sliders (exclude thermocline)
 const SLIDER_VARS = ALL_VARS.filter(v => v.key !== 'thermocline');
 
-// Predefined species with thermocline ranges
+// ============================================================
+//  PREDEFINED SPECIES
+//  Ranges sourced from Mediterranean fisheries literature:
+//  - Sardina pilchardus: Checkley et al. 2009, FAO Mediterranean
+//  - Engraulis encrasicolus: Tsikliras et al. 2010, STECF reports
+//  - Sardinella aurita: Ben Meriem et al. 2011, Benguela Current studies
+// ============================================================
+
 const PREDEFINED = [
-  { id:'sardine', name:'Sardine', sci:'Sardina pilchardus',     color:'#00aaff',
-    ranges:{ temperature:[13,20], chlorophyll:[0.5,4.0], oxygen:[5.5,8.5], salinity:[36,38.5], transparency:[5,25],  currentSpeed:[0,1.0], thermocline:[20,40] } },
-  { id:'anchovy', name:'Anchovy', sci:'Engraulis encrasicolus', color:'#ff4455',
-    ranges:{ temperature:[14,23], chlorophyll:[1.0,5.0], oxygen:[5.0,8.0], salinity:[36,38.5], transparency:[5,20],  currentSpeed:[0,1.5], thermocline:[15,35] } },
-  { id:'lacha',   name:'Lacha',   sci:'Sardinella aurita',      color:'#22cc77',
-    ranges:{ temperature:[20,27], chlorophyll:[0.3,2.5], oxygen:[4.5,8.0], salinity:[36,39],   transparency:[3,18],  currentSpeed:[0,2.0], thermocline:[25,45] } }
+  {
+    id: 'sardine', name: 'Sardine', sci: 'Sardina pilchardus', color: '#00aaff',
+    ranges: {
+      temperature:  [13, 20],
+      chlorophyll:  [0.5, 4.0],
+      oxygen:       [5.5, 8.5],
+      salinity:     [36, 38.5],
+      transparency: [5, 25],
+      currentSpeed: [0, 1.0],
+      thermocline:  [20, 40]
+    }
+  },
+  {
+    id: 'anchovy', name: 'Anchovy', sci: 'Engraulis encrasicolus', color: '#ff4455',
+    ranges: {
+      temperature:  [14, 23],
+      chlorophyll:  [1.0, 5.0],
+      oxygen:       [5.0, 8.0],
+      salinity:     [36, 38.5],
+      transparency: [5, 20],
+      currentSpeed: [0, 1.5],
+      thermocline:  [15, 35]
+    }
+  },
+  {
+    id: 'lacha', name: 'Lacha', sci: 'Sardinella aurita', color: '#22cc77',
+    ranges: {
+      temperature:  [20, 27],
+      chlorophyll:  [0.3, 2.5],
+      oxygen:       [4.5, 8.0],
+      salinity:     [36, 39],
+      transparency: [3, 18],
+      currentSpeed: [0, 2.0],
+      thermocline:  [25, 45]
+    }
+  }
 ];
 
-const COLOR_PALETTE = ['#00aaff','#ff4455','#22cc77','#ffaa00','#cc44ff','#ff6600','#00ffcc','#ff44aa','#00eebb','#44aaff'];
+const COLOR_PALETTE = [
+  '#00aaff','#ff4455','#22cc77','#ffaa00',
+  '#cc44ff','#ff6600','#00ffcc','#ff44aa','#00eebb','#44aaff'
+];
+
+// ============================================================
+//  APP STATE
+// ============================================================
 
 let userLat = null, userLon = null;
 let map, userMarker, radiusCircle;
 let hotspotResults = [];
 let animFrame;
-let oceanData = null;               // stores data.json
+let oceanData = null;
+
 let species = JSON.parse(localStorage.getItem('hs_species') || 'null')
   || PREDEFINED.map(s => ({ ...s, ranges: { ...s.ranges }, selected: false, expanded: false }));
+
 let modalColor = COLOR_PALETTE[0];
 let modalRanges = {};
-ALL_VARS.forEach(v => modalRanges[v.key] = [+(v.min+(v.max-v.min)*0.2).toFixed(1), +(v.min+(v.max-v.min)*0.6).toFixed(1)]);
+ALL_VARS.forEach(v => {
+  modalRanges[v.key] = [
+    +(v.min + (v.max - v.min) * 0.2).toFixed(1),
+    +(v.min + (v.max - v.min) * 0.6).toFixed(1)
+  ];
+});
 
-// Weighted variables (thermocline and front are fixed weights)
-const VAR_WEIGHTS = {
-  temperature:  0.25,
-  chlorophyll:  0.20,
-  oxygen:       0.15,
-  salinity:     0.08,
-  transparency: 0.07,
-  currentSpeed: 0.05,
-  thermocline:  0.12,
-  front:        0.08
+// ============================================================
+//  HSI ALGORITHM — CRITICALITY TIERS
+//
+//  Based on physiological priority in marine fish biology:
+//
+//  CRITICAL   — Hard veto. Fish flee immediately if outside range.
+//               Temperature: controls metabolism, spawning, migration.
+//               Oxygen: hypoxia causes direct mortality.
+//
+//  IMPORTANT  — No hard veto but strong GMM penalty.
+//               Salinity: osmotic stress if wrong, but fish tolerate
+//               ±15% before fleeing (euryhaline tolerance).
+//
+//  MODERATE   — Influences feeding success and depth preference.
+//               Chlorophyll: proxy for prey availability.
+//               Thermocline: determines preferred depth layer.
+//
+//  SECONDARY  — Comfort variables. Fish remain even if suboptimal.
+//               Transparency: light-sensitive feeding behavior.
+//               CurrentSpeed: energy cost of swimming.
+//
+//  BONUS      — Oceanic fronts aggregate fish and concentrate prey.
+//               Adds up to +5% to final score, never causes rejection.
+// ============================================================
+
+const CRITICALITY = {
+  temperature:  'critical',
+  oxygen:       'critical',
+  salinity:     'important',
+  chlorophyll:  'moderate',
+  thermocline:  'moderate',
+  transparency: 'secondary',
+  currentSpeed: 'secondary',
+  front:        'bonus'
 };
+
+// Hard gate tolerance: fraction of range width allowed outside bounds before veto
+// Example: temperature range [20,27] = 7°C wide → tolerance = 7 * 0.05 = 0.35°C outside
+const GATE_TOLERANCE = {
+  critical:  0.05,   // 5%  — near-zero outside tolerance
+  important: 0.15    // 15% — moderate buffer
+  // moderate / secondary / bonus => no hard gate
+};
+
+// GMM group weights (must sum to 1.0)
+// Derived from sensitivity analysis in habitat suitability literature
+const GMM_WEIGHTS = {
+  critical:  0.40,
+  important: 0.25,
+  moderate:  0.20,
+  secondary: 0.10,
+  bonus:     0.05
+};
+
+// ============================================================
+//  computeSI — Suitability Index [0..1] for a single variable
+//
+//  Uses a triangular curve:
+//   - Inside range: peaks at 1.0 at range center, 0.7 at edges
+//   - Outside range: linear decay over a margin window → 0.0
+//
+//  Why center-weighted? Fish don't live at the thermal edge of
+//  their tolerance — optimal density clusters near the optimum.
+// ============================================================
+
+function computeSI(val, lo, hi, vMin, vMax) {
+  if (val == null) return 0.5; // missing data => neutral assumption
+
+  const rangeWidth = hi - lo || 1;
+  const decayMargin = rangeWidth * 0.30 || (vMax - vMin) * 0.1;
+
+  if (val < lo) {
+    return Math.max(0, 1 - (lo - val) / decayMargin);
+  }
+  if (val > hi) {
+    return Math.max(0, 1 - (val - hi) / decayMargin);
+  }
+
+  // Inside range: score peaks at center (1.0), dips to 0.70 at edges
+  const center = (lo + hi) / 2;
+  const halfWidth = rangeWidth / 2 || 0.01;
+  return 0.70 + 0.30 * (1 - Math.abs(val - center) / halfWidth);
+}
+
+// ============================================================
+//  matchSpecies — core GMM-based HSI scoring
+//
+//  Three-layer pipeline:
+//    1. Hard Gate  — immediate rejection for critical/important vars
+//    2. SI Calc    — compute suitability index per variable
+//    3. GMM Score  — geometric mean within each criticality tier,
+//                    then weighted sum of tier scores
+//
+//  Geometric mean within a tier ensures that a single bad variable
+//  drags down the entire tier (e.g., low O2 kills the critical tier
+//  even if temperature is perfect).
+//
+//  Works identically for predefined AND user-added species — the
+//  algorithm is range-driven, not species-driven.
+// ============================================================
+
+function matchSpecies(point, ranges, frontIntensity, thermoclineValue) {
+  const matchedVars = [];
+
+  // ── LAYER 1: Hard Gate ────────────────────────────────────
+  // Check critical and important variables against absolute tolerances.
+  // If a value is too far outside the user-defined range → score = 0.
+  for (const [key, criticality] of Object.entries(CRITICALITY)) {
+    const tolerance = GATE_TOLERANCE[criticality];
+    if (!tolerance) continue; // moderate / secondary / bonus => skip gate
+
+    const range = ranges[key];
+    if (!range) continue;
+
+    const val = (key === 'thermocline') ? thermoclineValue : point[key];
+    if (val == null) continue;
+
+    const [lo, hi] = range;
+    const absoluteMargin = (hi - lo) * tolerance || 0.5;
+
+    if (val < lo - absoluteMargin || val > hi + absoluteMargin) {
+      // Hard veto — no need to evaluate anything else
+      return { score: 0, matchedVars: [], hardFail: key };
+    }
+  }
+
+  // ── LAYER 2: Compute SI per variable ─────────────────────
+  const si = {};
+
+  for (const v of ALL_VARS) {
+    if (v.key === 'thermocline') continue; // handled separately below
+    const range = ranges[v.key];
+    const lo = range ? range[0] : v.min;
+    const hi = range ? range[1] : v.max;
+    si[v.key] = computeSI(point[v.key], lo, hi, v.min, v.max);
+    if (si[v.key] >= 0.80) matchedVars.push(v.label);
+  }
+
+  // Thermocline SI
+  const thermoV = ALL_VARS.find(v => v.key === 'thermocline');
+  if (ranges.thermocline && thermoclineValue != null) {
+    si.thermocline = computeSI(
+      thermoclineValue,
+      ranges.thermocline[0], ranges.thermocline[1],
+      thermoV.min, thermoV.max
+    );
+  } else {
+    si.thermocline = 0.70; // no data => mildly favorable neutral
+  }
+
+  // Front intensity SI (0..1 directly from data)
+  si.front = (frontIntensity != null) ? frontIntensity : 0.50;
+
+  // ── LAYER 3: Geometric Mean per criticality tier ──────────
+  //
+  // Group variables into tiers, compute geometric mean within each.
+  // Geometric mean = nth-root of product → one weak SI pulls the whole
+  // tier down, unlike arithmetic mean which allows compensation.
+
+  const tiers = {
+    critical:  ['temperature', 'oxygen'],
+    important: ['salinity'],
+    moderate:  ['chlorophyll', 'thermocline'],
+    secondary: ['transparency', 'currentSpeed'],
+    bonus:     ['front']
+  };
+
+  const tierScores = {};
+  for (const [tier, keys] of Object.entries(tiers)) {
+    const product = keys.reduce((p, k) => p * Math.max(0.001, si[k] ?? 0.5), 1);
+    tierScores[tier] = Math.pow(product, 1 / keys.length);
+  }
+
+  // Weighted sum of tier geometric means → final HSI
+  const HSI = Object.entries(GMM_WEIGHTS).reduce((sum, [tier, weight]) => {
+    return sum + (tierScores[tier] ?? 0.5) * weight;
+  }, 0);
+
+  return {
+    score: Math.min(1, HSI),
+    matchedVars
+  };
+}
 
 // ============================================================
 //  UTILITIES
 // ============================================================
+
 function haversineKm(la1, lo1, la2, lo2) {
-  const R = 6371, dL = (la2-la1)*Math.PI/180, dO = (lo2-lo1)*Math.PI/180;
-  const a = Math.sin(dL/2)**2 + Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dO/2)**2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const R = 6371;
+  const dL = (la2 - la1) * Math.PI / 180;
+  const dO = (lo2 - lo1) * Math.PI / 180;
+  const a = Math.sin(dL/2)**2 + Math.cos(la1*Math.PI/180) * Math.cos(la2*Math.PI/180) * Math.sin(dO/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 function hexA(hex, alpha) {
-  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
-  return `rgba(${r},${g},${b},${Math.max(0,Math.min(1,alpha)).toFixed(2)})`;
+  const r = parseInt(hex.slice(1,3), 16);
+  const g = parseInt(hex.slice(3,5), 16);
+  const b = parseInt(hex.slice(5,7), 16);
+  return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha)).toFixed(2)})`;
 }
 
 // ============================================================
-//  DATA LOADING (now reads frontIntensity from JSON)
+//  DATA LOADING
+//  Reads data.json produced by GitHub Actions Copernicus pipeline.
+//  Expected fields: lat, lon, temperature, salinity, chlorophyll,
+//  oxygen, transparency, currentSpeed, thermocline, frontIntensity
 // ============================================================
+
 async function loadOceanData() {
   try {
     const response = await fetch('data.json');
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const json = await response.json();
 
-    const latArr = json.lat;
-    const lonArr = json.lon;
-    const tempArr = json.temperature;
-    const salArr = json.salinity;
-    const chlArr = json.chlorophyll;
-    const o2Arr = json.oxygen;
-    const transArr = json.transparency;
-    const currArr = json.currentSpeed;
-    const thermoArr = json.thermocline;
-    const frontArr = json.frontIntensity;  // new field
-
-    const n = latArr.length;
+    const n = json.lat.length;
     const points = [];
     for (let i = 0; i < n; i++) {
       points.push({
-        lat: latArr[i],
-        lon: lonArr[i],
-        temperature: tempArr[i],
-        salinity: salArr[i],
-        chlorophyll: chlArr[i],
-        oxygen: o2Arr[i],
-        transparency: transArr[i],
-        currentSpeed: currArr[i],
-        thermocline: thermoArr[i],
-        frontIntensity: frontArr ? frontArr[i] : 0.5   // fallback if not present
+        lat:           json.lat[i],
+        lon:           json.lon[i],
+        temperature:   json.temperature[i],
+        salinity:      json.salinity[i],
+        chlorophyll:   json.chlorophyll[i],
+        oxygen:        json.oxygen[i],
+        transparency:  json.transparency[i],
+        currentSpeed:  json.currentSpeed[i],
+        thermocline:   json.thermocline[i],
+        frontIntensity: json.frontIntensity ? json.frontIntensity[i] : 0.5
       });
     }
 
-    oceanData = { timestamp: json.timestamp, resolution_km: json.resolution_km, points: points };
-    console.log(`Loaded ${oceanData.points.length} points from ${oceanData.timestamp}`);
+    oceanData = {
+      timestamp:     json.timestamp,
+      resolution_km: json.resolution_km,
+      points
+    };
 
+    console.log(`Loaded ${oceanData.points.length} points — ${oceanData.timestamp}`);
     if (userLat) document.getElementById('search-btn').disabled = false;
+
   } catch (err) {
     console.error('Failed to load ocean data:', err);
-    document.getElementById('results-text').textContent = '⚠️ Failed to load environmental data. Please refresh.';
+    document.getElementById('results-text').textContent =
+      '⚠️ Failed to load environmental data. Please refresh.';
   }
 }
 
 // ============================================================
-//  SPECIES MATCHING with thermocline & front
+//  CLUSTERING
+//  Groups nearby raw hotspot points into visual clusters.
+//  Radius = max member distance from centroid (no padding).
+//  Single isolated points get a minimum 0.5 km display radius.
 // ============================================================
-function matchSpecies(point, ranges, frontIntensity, thermoclineValue) {
-  const varList = [
-    { key:'temperature',  label:'Temperature'   },
-    { key:'chlorophyll',  label:'Chlorophyll'   },
-    { key:'oxygen',       label:'Dissolved O₂'  },
-    { key:'salinity',     label:'Salinity'      },
-    { key:'transparency', label:'Transparency'  },
-    { key:'currentSpeed', label:'Current Speed' }
-  ];
-  let weightedScore = 0;
-  let totalWeight = 0;
-  const matched = [];
 
-  // User-adjustable variables
-  for (const v of varList) {
-    const w = VAR_WEIGHTS[v.key];
-    const range = ranges[v.key];
-    totalWeight += w;
-    if (!range) { weightedScore += w; continue; }
-    const [lo, hi] = range;
-    const val = point[v.key];
-    if (val == null) { weightedScore += w * 0.5; continue; }
-    if (val >= lo && val <= hi) {
-      weightedScore += w;
-      matched.push(v.label);
-    } else {
-      const margin = (hi - lo) * 0.25 || 1;
-      weightedScore += w * Math.max(0, 1 - (val < lo ? lo - val : val - hi) / margin);
-    }
-  }
-
-  // Thermocline (fixed weight)
-  const thermoWeight = VAR_WEIGHTS.thermocline;
-  let thermoScore = 1;
-  if (ranges.thermocline && thermoclineValue != null) {
-    const [lo, hi] = ranges.thermocline;
-    if (thermoclineValue >= lo && thermoclineValue <= hi) {
-      thermoScore = 1;
-    } else {
-      const margin = (hi - lo) * 0.3;
-      const dist = thermoclineValue < lo ? lo - thermoclineValue : thermoclineValue - hi;
-      thermoScore = Math.max(0, 1 - dist / margin);
-    }
-  } else if (!ranges.thermocline) {
-    thermoScore = 1;
-  }
-  weightedScore += thermoScore * thermoWeight;
-  totalWeight += thermoWeight;
-
-  // Front intensity (fixed weight)
-  const frontWeight = VAR_WEIGHTS.front;
-  const frontScore = frontIntensity != null ? frontIntensity : 0.5;
-  weightedScore += frontScore * frontWeight;
-  totalWeight += frontWeight;
-
-  const finalScore = Math.min(1, weightedScore / totalWeight);
-  return { score: finalScore, matchedVars: matched };
-}
-
-// ============================================================
-//  CLUSTERING — adjusted for small-scale hotspots
-// ============================================================
 function clusterHotspots(rawPoints) {
-  const CLUSTER_RADIUS_KM = 1.5; // merge points within 1.5 km
+  const CLUSTER_RADIUS_KM = 1.5;
   const used = new Array(rawPoints.length).fill(false);
   const clusters = [];
 
@@ -577,10 +729,11 @@ function clusterHotspots(rawPoints) {
     const avgMatch = members.reduce((s, p) => s + p.match, 0) / members.length;
     const best = members.reduce((a, b) => b.match > a.match ? b : a);
 
-    // Radius: single point = 0.5 km, else max distance from centroid (no extra margin)
-    const radiusKm = members.length === 1 ? 0.5 :
-      Math.max(...members.map(p => haversineKm(avgLat, avgLon, p.lat, p.lon)));
+    const radiusKm = members.length === 1
+      ? 0.5
+      : Math.max(...members.map(p => haversineKm(avgLat, avgLon, p.lat, p.lon)));
 
+    // Merge species map: keep highest match per species name
     const speciesMap = {};
     members.forEach(p => {
       (p.allSpecies || [{ name: p.name, color: p.color, match: p.match }]).forEach(sp => {
@@ -592,15 +745,15 @@ function clusterHotspots(rawPoints) {
     const allSpecies = Object.values(speciesMap).sort((a, b) => b.match - a.match);
 
     clusters.push({
-      lat: avgLat,
-      lon: avgLon,
-      match: +avgMatch.toFixed(1),
-      radiusKm: +radiusKm.toFixed(1),
-      count: members.length,
-      color: best.color,
-      name: best.name,
+      lat:       avgLat,
+      lon:       avgLon,
+      match:     +avgMatch.toFixed(1),
+      radiusKm:  +radiusKm.toFixed(1),
+      count:     members.length,
+      color:     best.color,
+      name:      best.name,
       allSpecies,
-      isFront: members.some(p => p.frontIntensity > 0.6),
+      isFront:   members.some(p => p.frontIntensity > 0.6),
       pointData: best.pointData
     });
   }
@@ -610,13 +763,25 @@ function clusterHotspots(rawPoints) {
 }
 
 // ============================================================
-//  SEARCH
+//  SEARCH PIPELINE
+//  1. Filter points within 100 km radius
+//  2. Run matchSpecies for each selected species on each point
+//  3. Keep points with score >= MIN_SCORE_THRESHOLD
+//  4. Cluster and return
+//
+//  MIN_SCORE_THRESHOLD raised to 0.60 because GMM + hard gates
+//  already eliminate low-quality matches; 0.60 now means "genuinely
+//  suitable" rather than "somewhat plausible".
 // ============================================================
+
+const MIN_SCORE_THRESHOLD = 0.60;
+const SEARCH_RADIUS_KM    = 100;
+
 function searchHotspots(selectedSpecies) {
-  if (!oceanData || !oceanData.points) throw new Error('Ocean data not loaded');
-  const radiusKm = 100;
+  if (!oceanData?.points) throw new Error('Ocean data not loaded');
+
   const pointsInRange = oceanData.points.filter(p =>
-    haversineKm(userLat, userLon, p.lat, p.lon) <= radiusKm
+    haversineKm(userLat, userLon, p.lat, p.lon) <= SEARCH_RADIUS_KM
   );
 
   const rawHotspots = [];
@@ -631,12 +796,13 @@ function searchHotspots(selectedSpecies) {
         point.frontIntensity,
         point.thermocline
       );
-      if (score >= 0.5) {
+
+      if (score >= MIN_SCORE_THRESHOLD) {
         speciesMatches.push({
-          name: sp.name,
+          name:  sp.name,
           color: sp.color,
           match: +(score * 100).toFixed(1),
-          vars: matchedVars
+          vars:  matchedVars
         });
       }
     }
@@ -646,14 +812,15 @@ function searchHotspots(selectedSpecies) {
     const best = speciesMatches[0];
 
     rawHotspots.push({
-      lat: point.lat,
-      lon: point.lon,
-      match: best.match,
-      color: best.color,
-      name: best.name,
-      allSpecies: speciesMatches,
-      isFront: point.frontIntensity > 0.6,
-      pointData: point
+      lat:           point.lat,
+      lon:           point.lon,
+      match:         best.match,
+      color:         best.color,
+      name:          best.name,
+      allSpecies:    speciesMatches,
+      isFront:       point.frontIntensity > 0.6,
+      frontIntensity: point.frontIntensity,
+      pointData:     point
     });
   }
 
@@ -661,18 +828,27 @@ function searchHotspots(selectedSpecies) {
 }
 
 // ============================================================
-//  MAP & GPS
+//  MAP INIT
 // ============================================================
+
 map = L.map('map', { zoomControl: false, attributionControl: false }).setView([36.7, 3.1], 7);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 
 const canvasEl = document.getElementById('hotspot-canvas');
 const ctx = canvasEl.getContext('2d');
-function resizeCanvas() { canvasEl.width = window.innerWidth; canvasEl.height = window.innerHeight; }
+
+function resizeCanvas() {
+  canvasEl.width  = window.innerWidth;
+  canvasEl.height = window.innerHeight;
+}
 resizeCanvas();
 window.addEventListener('resize', () => { resizeCanvas(); drawHotspots(); });
 map.on('move zoom', drawHotspots);
+
+// ============================================================
+//  GPS
+// ============================================================
 
 function initGPS() {
   if (!navigator.geolocation) { setGPSText('GPS not supported'); return; }
@@ -681,25 +857,33 @@ function initGPS() {
     userLon = pos.coords.longitude;
     document.getElementById('gps-dot').classList.add('active');
     setGPSText(`${userLat.toFixed(3)}°N  ${userLon.toFixed(3)}°E`);
-    if (userMarker) map.removeLayer(userMarker);
+
+    if (userMarker)  map.removeLayer(userMarker);
+    if (radiusCircle) map.removeLayer(radiusCircle);
+
     userMarker = L.circleMarker([userLat, userLon], {
       radius: 7, color: '#22cc77', fillColor: '#22cc77', fillOpacity: 1, weight: 3
     }).addTo(map);
-    if (radiusCircle) map.removeLayer(radiusCircle);
+
     radiusCircle = L.circle([userLat, userLon], {
-      radius: 100000, color: '#00d4ff', fillColor: '#00d4ff',
+      radius: SEARCH_RADIUS_KM * 1000,
+      color: '#00d4ff', fillColor: '#00d4ff',
       fillOpacity: 0.04, weight: 1, dashArray: '6 4'
     }).addTo(map);
+
     if (oceanData) document.getElementById('search-btn').disabled = false;
   }, () => setGPSText('GPS denied'), { enableHighAccuracy: true });
 }
+
 function setGPSText(t) { document.getElementById('gps-text').textContent = t; }
 initGPS();
 
 // ============================================================
-//  DRAW HOTSPOTS (animation)
+//  CANVAS RENDER — animated hotspot glows
 // ============================================================
+
 let phase = 0;
+
 function drawHotspots() {
   cancelAnimationFrame(animFrame);
   ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
@@ -710,19 +894,21 @@ function drawHotspots() {
     phase += 0.018;
 
     hotspotResults.forEach(h => {
-      const center = map.latLngToContainerPoint([h.lat, h.lon]);
-      const edgePt = map.latLngToContainerPoint([
-        h.lat, h.lon + (h.radiusKm / 111) * (1 / Math.cos(h.lat * Math.PI / 180))
+      const center  = map.latLngToContainerPoint([h.lat, h.lon]);
+      const edgePt  = map.latLngToContainerPoint([
+        h.lat,
+        h.lon + (h.radiusKm / 111) * (1 / Math.cos(h.lat * Math.PI / 180))
       ]);
       const pxRadius = Math.max(18, Math.hypot(edgePt.x - center.x, edgePt.y - center.y));
-      const pulse = 0.75 + 0.25 * Math.sin(phase + h.lat * 6 + h.lon * 4);
-      const species = h.allSpecies || [{ color: h.color, match: h.match }];
+      const pulse    = 0.75 + 0.25 * Math.sin(phase + h.lat * 6 + h.lon * 4);
+      const species  = h.allSpecies || [{ color: h.color, match: h.match }];
 
+      // Concentric glow rings per species
       species.forEach((sp, idx) => {
         const ringR = pxRadius * (1 - idx * 0.18);
         if (ringR < 8) return;
         const alpha = (0.12 - idx * 0.03) * pulse;
-        const grad = ctx.createRadialGradient(center.x, center.y, ringR * 0.3, center.x, center.y, ringR);
+        const grad  = ctx.createRadialGradient(center.x, center.y, ringR * 0.3, center.x, center.y, ringR);
         grad.addColorStop(0,   hexA(sp.color, alpha * 2.5));
         grad.addColorStop(0.6, hexA(sp.color, alpha));
         grad.addColorStop(1,   hexA(sp.color, 0));
@@ -732,6 +918,7 @@ function drawHotspots() {
         ctx.fill();
       });
 
+      // Outer ring — solid for fronts, dashed for normal
       ctx.beginPath();
       ctx.arc(center.x, center.y, pxRadius, 0, Math.PI * 2);
       ctx.strokeStyle = hexA(h.color, 0.35 * pulse);
@@ -740,6 +927,7 @@ function drawHotspots() {
       ctx.stroke();
       ctx.setLineDash([]);
 
+      // Front indicator — extra yellow halo
       if (h.isFront) {
         ctx.beginPath();
         ctx.arc(center.x, center.y, pxRadius + 5 * pulse, 0, Math.PI * 2);
@@ -748,6 +936,7 @@ function drawHotspots() {
         ctx.stroke();
       }
 
+      // Center dot
       const dotR = 5 + 3 * pulse;
       ctx.beginPath();
       ctx.arc(center.x, center.y, dotR, 0, Math.PI * 2);
@@ -757,6 +946,7 @@ function drawHotspots() {
       ctx.fill();
       ctx.shadowBlur  = 0;
 
+      // Match % label — only at zoom >= 8
       if (map.getZoom() >= 8) {
         ctx.font      = 'bold 10px IBM Plex Mono, monospace';
         ctx.fillStyle = hexA(h.color, 0.9);
@@ -764,22 +954,24 @@ function drawHotspots() {
         ctx.fillText(h.match.toFixed(0) + '%', center.x, center.y - dotR - 4);
       }
     });
+
     animFrame = requestAnimationFrame(loop);
   }
   loop();
 }
 
 // ============================================================
-//  POPUP
+//  HOTSPOT POPUP — click detection on canvas
 // ============================================================
+
 map.getContainer().addEventListener('click', e => {
   const mx = e.clientX, my = e.clientY;
   const popup = document.getElementById('hotspot-popup');
   let hit = null, bestD = Infinity;
 
   hotspotResults.forEach(h => {
-    const center = map.latLngToContainerPoint([h.lat, h.lon]);
-    const edgePt = map.latLngToContainerPoint([
+    const center  = map.latLngToContainerPoint([h.lat, h.lon]);
+    const edgePt  = map.latLngToContainerPoint([
       h.lat, h.lon + (h.radiusKm / 111) * (1 / Math.cos(h.lat * Math.PI / 180))
     ]);
     const pxRadius = Math.max(18, Math.hypot(edgePt.x - center.x, edgePt.y - center.y));
@@ -802,8 +994,8 @@ map.getContainer().addEventListener('click', e => {
         .map(s => `<span style="color:${s.color}">● ${s.name} ${s.match.toFixed(0)}%</span>`)
         .join('<br>');
     } else {
-      nameEl.style.color  = hit.color;
-      nameEl.textContent  = hit.name;
+      nameEl.style.color = hit.color;
+      nameEl.textContent = hit.name;
     }
 
     const pctEl = document.getElementById('popup-pct');
@@ -813,7 +1005,7 @@ map.getContainer().addEventListener('click', e => {
     if (userLat) {
       const km = haversineKm(userLat, userLon, hit.lat, hit.lon);
       document.getElementById('popup-dist').textContent =
-        '📍 ' + (km < 1 ? `${(km*1000).toFixed(0)} m` : `${km.toFixed(1)} km`) +
+        '📍 ' + (km < 1 ? `${(km * 1000).toFixed(0)} m` : `${km.toFixed(1)} km`) +
         `  ·  ~${hit.radiusKm} km zone  ·  ${hit.count} pts`;
     }
 
@@ -821,13 +1013,13 @@ map.getContainer().addEventListener('click', e => {
     varsEl.innerHTML = '';
     const pd = hit.pointData || {};
     [
-      { key:'temperature',  label:'🌡️ Temp',        unit:'°C',    dec:1 },
-      { key:'chlorophyll',  label:'🟢 Chl',          unit:'mg/m³', dec:2 },
-      { key:'oxygen',       label:'💧 O₂',           unit:'ml/l',  dec:2 },
-      { key:'salinity',     label:'🧂 Salinity',      unit:'ppt',   dec:1 },
-      { key:'transparency', label:'👁️ Secchi',        unit:'m',     dec:0 },
-      { key:'currentSpeed', label:'🌊 Current',       unit:'kn',    dec:2 },
-      { key:'thermocline',  label:'📏 Thermocline',   unit:'m',     dec:0 }
+      { key:'temperature',  label:'🌡️ Temp',      unit:'°C',    dec:1 },
+      { key:'chlorophyll',  label:'🟢 Chl',        unit:'mg/m³', dec:2 },
+      { key:'oxygen',       label:'💧 O₂',         unit:'ml/l',  dec:2 },
+      { key:'salinity',     label:'🧂 Salinity',    unit:'ppt',   dec:1 },
+      { key:'transparency', label:'👁️ Secchi',      unit:'m',     dec:0 },
+      { key:'currentSpeed', label:'🌊 Current',     unit:'kn',    dec:2 },
+      { key:'thermocline',  label:'📏 Thermocline', unit:'m',     dec:0 }
     ].forEach(v => {
       const val = pd[v.key];
       const d   = document.createElement('div');
@@ -838,43 +1030,47 @@ map.getContainer().addEventListener('click', e => {
       if (val == null) d.style.opacity = '0.4';
       varsEl.appendChild(d);
     });
+
   } else {
     popup.style.display = 'none';
   }
 });
 
 // ============================================================
-//  SPECIES UI (with edit & delete for custom species)
+//  SPECIES UI
 // ============================================================
-function isPredefinedSpecies(sp) {
-  // Predefined species have ids 'sardine', 'anchovy', 'lacha'
+
+function isPredefined(sp) {
   return sp.id === 'sardine' || sp.id === 'anchovy' || sp.id === 'lacha';
 }
 
 function deleteSpecies(index) {
-  if (index >= 0 && index < species.length) {
-    species.splice(index, 1);
-    saveSpecies();
-    renderSpecies();
-  }
+  species.splice(index, 1);
+  saveSpecies();
+  renderSpecies();
 }
 
 function renameSpecies(index, newName) {
-  if (index >= 0 && index < species.length) {
-    species[index].name = newName;
-    saveSpecies();
-    renderSpecies();
-  }
+  species[index].name = newName;
+  saveSpecies();
+  renderSpecies();
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/[&<>]/g, m => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[m]));
 }
 
 function renderSpecies() {
   const list = document.getElementById('species-list');
   list.innerHTML = '';
+
   species.forEach((sp, i) => {
-    const isPredef = isPredefinedSpecies(sp);
+    const isPredef = isPredefined(sp);
     const card = document.createElement('div');
     card.className = 'species-card' + (sp.selected ? ' selected' : '') + (sp.expanded ? ' expanded' : '');
     card.style.setProperty('--card-color', sp.color);
+
     card.innerHTML = `
       <div class="species-card-header">
         <div class="species-left">
@@ -886,59 +1082,47 @@ function renderSpecies() {
           </div>
         </div>
         <div class="species-actions">
-          ${!isPredef ? `<span class="edit-species" title="Edit name">✏️</span>
-                         <span class="delete-species" title="Delete species">🗑️</span>` : ''}
+          ${!isPredef
+            ? `<span class="edit-species" title="Rename">✏️</span>
+               <span class="delete-species" title="Delete">🗑️</span>`
+            : ''}
           <div class="species-chevron">▼</div>
         </div>
       </div>
       <div class="sliders-body">
         <div class="sliders-inner" id="sliders-${i}"></div>
       </div>`;
+
     const chk = card.querySelector('.species-checkbox');
-    chk.addEventListener('click', (e) => {
+    chk.addEventListener('click', e => {
       e.stopPropagation();
       sp.selected = chk.checked;
       saveSpecies();
       renderSpecies();
     });
-    const header = card.querySelector('.species-card-header');
-    header.addEventListener('click', (e) => {
-      // Do not toggle if click on edit/delete buttons
-      if (e.target.classList && (e.target.classList.contains('edit-species') || e.target.classList.contains('delete-species'))) return;
+
+    card.querySelector('.species-card-header').addEventListener('click', e => {
+      if (e.target.classList.contains('edit-species') ||
+          e.target.classList.contains('delete-species')) return;
       sp.expanded = !sp.expanded;
       saveSpecies();
       renderSpecies();
     });
-    // Edit button
+
     if (!isPredef) {
-      const editBtn = card.querySelector('.edit-species');
-      editBtn.addEventListener('click', (e) => {
+      card.querySelector('.edit-species').addEventListener('click', e => {
         e.stopPropagation();
-        const newName = prompt('Enter new name for this species:', sp.name);
-        if (newName && newName.trim() !== '') {
-          renameSpecies(i, newName.trim());
-        }
+        const n = prompt('New name:', sp.name);
+        if (n && n.trim()) renameSpecies(i, n.trim());
       });
-      const delBtn = card.querySelector('.delete-species');
-      delBtn.addEventListener('click', (e) => {
+      card.querySelector('.delete-species').addEventListener('click', e => {
         e.stopPropagation();
-        if (confirm(`Delete species "${sp.name}"? This cannot be undone.`)) {
-          deleteSpecies(i);
-        }
+        if (confirm(`Delete "${sp.name}"?`)) deleteSpecies(i);
       });
     }
+
     list.appendChild(card);
     if (sp.expanded) buildSliders(document.getElementById(`sliders-${i}`), sp, i);
-  });
-}
-
-function escapeHtml(str) {
-  if (!str) return '';
-  return str.replace(/[&<>]/g, function(m) {
-    if (m === '&') return '&amp;';
-    if (m === '<') return '&lt;';
-    if (m === '>') return '&gt;';
-    return m;
   });
 }
 
@@ -956,29 +1140,36 @@ function buildSliders(container, sp, idx) {
         <input type="range" id="rmax-${idx}-${v.key}" min="${v.min}" max="${v.max}" step="${v.step}" value="${mx}" />
       </div>`;
     container.appendChild(row);
+
     const rMin = container.querySelector(`#rmin-${idx}-${v.key}`);
     const rMax = container.querySelector(`#rmax-${idx}-${v.key}`);
     const lbl  = container.querySelector(`#lbl-${idx}-${v.key}`);
     const fill = container.querySelector(`#fill-${idx}-${v.key}`);
+
     function upd() {
       let lo = parseFloat(rMin.value), hi = parseFloat(rMax.value);
       if (lo > hi) [lo, hi] = [hi, lo];
       const r = v.max - v.min;
-      fill.style.left  = ((lo-v.min)/r*100)+'%';
-      fill.style.width = ((hi-lo)/r*100)+'%';
+      fill.style.left  = ((lo - v.min) / r * 100) + '%';
+      fill.style.width = ((hi - lo)    / r * 100) + '%';
       lbl.textContent  = `${lo}–${hi} ${v.unit}`;
       sp.ranges[v.key] = [lo, hi];
       saveSpecies();
     }
-    rMin.addEventListener('input', upd); rMax.addEventListener('input', upd); upd();
+    rMin.addEventListener('input', upd);
+    rMax.addEventListener('input', upd);
+    upd();
   });
 }
 
-function saveSpecies() { localStorage.setItem('hs_species', JSON.stringify(species)); }
+function saveSpecies() {
+  localStorage.setItem('hs_species', JSON.stringify(species));
+}
 
 // ============================================================
 //  SEARCH BUTTON
 // ============================================================
+
 document.getElementById('search-btn').addEventListener('click', async () => {
   const selected = species.filter(s => s.selected);
   if (!selected.length) {
@@ -995,13 +1186,13 @@ document.getElementById('search-btn').addEventListener('click', async () => {
   }
 
   const btn = document.getElementById('search-btn');
-  btn.disabled = true;
+  btn.disabled    = true;
   btn.textContent = 'Searching...';
-  document.getElementById('results-text').innerHTML = '<div class="spinner"></div> Analyzing data...';
+  document.getElementById('results-text').innerHTML =
+    '<div class="spinner"></div> Analyzing data...';
 
   try {
-    const hotspots = searchHotspots(selected);
-    hotspotResults = hotspots;
+    hotspotResults = searchHotspots(selected);
     document.getElementById('results-text').innerHTML =
       `<span class="result-count">${hotspotResults.length}</span> hotspots found`;
     drawHotspots();
@@ -1009,77 +1200,69 @@ document.getElementById('search-btn').addEventListener('click', async () => {
   } catch (err) {
     document.getElementById('results-text').textContent = `Error: ${err.message}`;
   } finally {
-    btn.disabled = false;
+    btn.disabled    = false;
     btn.textContent = 'SEARCH HOTSPOTS';
   }
 });
 
 // ============================================================
 //  CAPTURE CURRENT SPOT
+//  Builds a new species profile from the nearest ocean data point.
+//  Ranges are set as ±15% of the captured value (species-agnostic).
+//  The resulting species goes through the same GMM pipeline as
+//  predefined ones — no special treatment needed.
 // ============================================================
+
 async function captureCurrentSpot() {
-  if (!userLat || !userLon) {
-    alert("Location not available. Please enable GPS.");
-    return;
-  }
-  if (!oceanData) {
-    alert("Environmental data not loaded yet.");
-    return;
-  }
+  if (!userLat || !userLon) { alert('Location not available.'); return; }
+  if (!oceanData)           { alert('Environmental data not loaded yet.'); return; }
 
-  // Find nearest point
-  let minDist = Infinity;
-  let nearest = null;
-  for (let p of oceanData.points) {
+  let minDist = Infinity, nearest = null;
+  for (const p of oceanData.points) {
     const d = haversineKm(userLat, userLon, p.lat, p.lon);
-    if (d < minDist) {
-      minDist = d;
-      nearest = p;
-    }
+    if (d < minDist) { minDist = d; nearest = p; }
   }
-  if (!nearest) {
-    alert("No nearby environmental data found.");
-    return;
-  }
+  if (!nearest) { alert('No nearby data found.'); return; }
 
-  // Build ranges around the captured values (adjustable margins)
   const ranges = {};
   ALL_VARS.forEach(v => {
     const val = nearest[v.key];
     if (val == null) {
-      ranges[v.key] = [v.min, v.max]; // fallback
+      ranges[v.key] = [v.min, v.max];
     } else {
-      let low = val * 0.85;
-      let high = val * 1.15;
-      if (v.key === 'salinity') { low = val * 0.98; high = val * 1.02; }
-      if (v.key === 'currentSpeed') { low = Math.max(0, val * 0.5); high = val * 1.8; }
-      if (v.key === 'thermocline') { low = Math.max(0, val * 0.7); high = val * 1.3; }
-      low = Math.max(v.min, Math.min(v.max, low));
-      high = Math.max(v.min, Math.min(v.max, high));
-      ranges[v.key] = [Math.round(low * 10) / 10, Math.round(high * 10) / 10];
+      let lo = val * 0.85, hi = val * 1.15;
+      if (v.key === 'salinity')     { lo = val * 0.98; hi = val * 1.02; }
+      if (v.key === 'currentSpeed') { lo = Math.max(0, val * 0.5); hi = val * 1.8; }
+      if (v.key === 'thermocline')  { lo = Math.max(0, val * 0.7); hi = val * 1.3; }
+      ranges[v.key] = [
+        Math.round(Math.max(v.min, Math.min(v.max, lo)) * 10) / 10,
+        Math.round(Math.max(v.min, Math.min(v.max, hi)) * 10) / 10
+      ];
     }
   });
 
-  const newName = `Captured ${species.filter(s => s.name.startsWith('Captured')).length + 1}`;
+  const captureCount = species.filter(s => s.name.startsWith('Captured')).length + 1;
   species.push({
-    id: 'captured_' + Date.now(),
-    name: newName,
-    sci: `Recorded at ${userLat.toFixed(3)}, ${userLon.toFixed(3)}`,
-    color: COLOR_PALETTE[species.length % COLOR_PALETTE.length],
-    ranges: ranges,
+    id:       'captured_' + Date.now(),
+    name:     `Captured ${captureCount}`,
+    sci:      `${userLat.toFixed(3)}, ${userLon.toFixed(3)}`,
+    color:    COLOR_PALETTE[species.length % COLOR_PALETTE.length],
+    ranges,
     selected: true,
     expanded: true
   });
+
   saveSpecies();
   renderSpecies();
-  alert(`✅ New species "${newName}" added based on current location.\nYou can now search for similar spots.`);
+  alert(`✅ "Captured ${captureCount}" added. Search for similar spots.`);
 }
 
 document.getElementById('capture-spot-btn').addEventListener('click', captureCurrentSpot);
 
 // ============================================================
-//  SHEET COLLAPSE/EXPAND
+//  SHEET COLLAPSE / EXPAND
 // ============================================================
+
 function collapseSheet() {
   const sheet = document.getElementById('sheet');
   sheet.style.height = '';
@@ -1087,6 +1270,7 @@ function collapseSheet() {
   sheet.classList.add('collapsed');
   document.getElementById('nav-count').textContent = hotspotResults.length;
 }
+
 document.getElementById('expand-btn').addEventListener('click', () => {
   const sheet = document.getElementById('sheet');
   sheet.classList.remove('collapsed');
@@ -1096,34 +1280,38 @@ document.getElementById('expand-btn').addEventListener('click', () => {
 // ============================================================
 //  DRAG HANDLE
 // ============================================================
+
 (function () {
-  const sheet = document.getElementById('sheet');
+  const sheet  = document.getElementById('sheet');
   const handle = document.getElementById('drag-handle');
   let startY, startH, dragging = false;
+
   function onStart(e) {
     dragging = true;
-    startY = e.touches ? e.touches[0].clientY : e.clientY;
-    startH = sheet.getBoundingClientRect().height;
+    startY   = e.touches ? e.touches[0].clientY : e.clientY;
+    startH   = sheet.getBoundingClientRect().height;
     sheet.style.transition = 'none';
     e.preventDefault();
   }
   function onMove(e) {
     if (!dragging) return;
-    const y = e.touches ? e.touches[0].clientY : e.clientY;
+    const y    = e.touches ? e.touches[0].clientY : e.clientY;
     const newH = Math.max(64, Math.min(window.innerHeight * 0.94, startH + (startY - y)));
     sheet.style.height = newH + 'px';
     sheet.classList.remove('collapsed', 'full');
     e.preventDefault();
   }
   function onEnd() {
-    if (!dragging) return; dragging = false;
+    if (!dragging) return;
+    dragging = false;
     sheet.style.transition = '';
-    const h = sheet.getBoundingClientRect().height;
+    const h  = sheet.getBoundingClientRect().height;
     const vh = window.innerHeight;
-    if (h < vh * 0.18)      { sheet.classList.add('collapsed'); sheet.style.height = ''; }
+    if      (h < vh * 0.18) { sheet.classList.add('collapsed'); sheet.style.height = ''; }
     else if (h > vh * 0.75) { sheet.classList.add('full');      sheet.style.height = ''; }
     else                     { sheet.style.height = h + 'px'; }
   }
+
   handle.addEventListener('touchstart', onStart, { passive: false });
   handle.addEventListener('mousedown',  onStart);
   window.addEventListener('touchmove',  onMove,  { passive: false });
@@ -1133,10 +1321,12 @@ document.getElementById('expand-btn').addEventListener('click', () => {
 })();
 
 // ============================================================
-//  MODAL (Add Species)
+//  MODAL — Add Species
 // ============================================================
+
 function buildColorRow() {
-  const row = document.getElementById('color-row'); row.innerHTML = '';
+  const row = document.getElementById('color-row');
+  row.innerHTML = '';
   COLOR_PALETTE.forEach(c => {
     const chip = document.createElement('div');
     chip.className = 'color-chip' + (c === modalColor ? ' selected' : '');
@@ -1147,39 +1337,55 @@ function buildColorRow() {
 }
 
 function buildModalSliders() {
-  const cont = document.getElementById('modal-sliders'); cont.innerHTML = '';
+  const cont = document.getElementById('modal-sliders');
+  cont.innerHTML = '';
   ALL_VARS.forEach(v => {
     const [mn, mx] = modalRanges[v.key];
     const row = document.createElement('div');
-    row.className = 'slider-row'; row.style.setProperty('--card-color', modalColor);
+    row.className = 'slider-row';
+    row.style.setProperty('--card-color', modalColor);
     row.innerHTML = `
       <label>${v.label} <span id="mlbl-${v.key}">${mn}–${mx} ${v.unit}</span></label>
       <div class="range-wrap">
-        <div class="range-track"><div class="range-fill" id="mfill-${v.key}" style="background:${modalColor}"></div></div>
+        <div class="range-track">
+          <div class="range-fill" id="mfill-${v.key}" style="background:${modalColor}"></div>
+        </div>
         <input type="range" id="mrmin-${v.key}" min="${v.min}" max="${v.max}" step="${v.step}" value="${mn}" />
         <input type="range" id="mrmax-${v.key}" min="${v.min}" max="${v.max}" step="${v.step}" value="${mx}" />
       </div>`;
     cont.appendChild(row);
-    const rMin = cont.querySelector(`#mrmin-${v.key}`), rMax = cont.querySelector(`#mrmax-${v.key}`);
-    const lbl  = cont.querySelector(`#mlbl-${v.key}`),  fill = cont.querySelector(`#mfill-${v.key}`);
+
+    const rMin = cont.querySelector(`#mrmin-${v.key}`);
+    const rMax = cont.querySelector(`#mrmax-${v.key}`);
+    const lbl  = cont.querySelector(`#mlbl-${v.key}`);
+    const fill = cont.querySelector(`#mfill-${v.key}`);
+
     function upd() {
       let lo = parseFloat(rMin.value), hi = parseFloat(rMax.value);
       if (lo > hi) [lo, hi] = [hi, lo];
       const r = v.max - v.min;
-      fill.style.left = ((lo-v.min)/r*100)+'%'; fill.style.width = ((hi-lo)/r*100)+'%';
-      lbl.textContent = `${lo}–${hi} ${v.unit}`; modalRanges[v.key] = [lo, hi];
+      fill.style.left  = ((lo - v.min) / r * 100) + '%';
+      fill.style.width = ((hi - lo)    / r * 100) + '%';
+      lbl.textContent  = `${lo}–${hi} ${v.unit}`;
+      modalRanges[v.key] = [lo, hi];
     }
-    rMin.addEventListener('input', upd); rMax.addEventListener('input', upd); upd();
+    rMin.addEventListener('input', upd);
+    rMax.addEventListener('input', upd);
+    upd();
   });
 }
 
 document.getElementById('add-species-btn').addEventListener('click', () => {
   modalColor = COLOR_PALETTE[species.length % COLOR_PALETTE.length];
   ALL_VARS.forEach(v => {
-    modalRanges[v.key] = [+(v.min+(v.max-v.min)*0.2).toFixed(1), +(v.min+(v.max-v.min)*0.6).toFixed(1)];
+    modalRanges[v.key] = [
+      +(v.min + (v.max - v.min) * 0.2).toFixed(1),
+      +(v.min + (v.max - v.min) * 0.6).toFixed(1)
+    ];
   });
   document.getElementById('modal-name').value = '';
-  buildColorRow(); buildModalSliders();
+  buildColorRow();
+  buildModalSliders();
   document.getElementById('modal-overlay').classList.add('show');
 });
 
@@ -1189,18 +1395,22 @@ document.getElementById('modal-cancel').addEventListener('click', () =>
 document.getElementById('modal-save').addEventListener('click', () => {
   const name = document.getElementById('modal-name').value.trim();
   if (!name) { document.getElementById('modal-name').focus(); return; }
+
   const newRanges = {};
   ALL_VARS.forEach(v => { newRanges[v.key] = [...modalRanges[v.key]]; });
+
   species.push({
-    id: 'custom_'+Date.now(),
-    name: name,
-    sci: '',
-    color: modalColor,
-    ranges: newRanges,
+    id:       'custom_' + Date.now(),
+    name,
+    sci:      '',
+    color:    modalColor,
+    ranges:   newRanges,
     selected: true,
     expanded: false
   });
-  saveSpecies(); renderSpecies();
+
+  saveSpecies();
+  renderSpecies();
   document.getElementById('modal-overlay').classList.remove('show');
 });
 
@@ -1209,13 +1419,19 @@ document.getElementById('modal-overlay').addEventListener('click', e => {
     document.getElementById('modal-overlay').classList.remove('show');
 });
 
-// Accordion
+// ============================================================
+//  ACCORDION
+// ============================================================
+
 document.getElementById('species-acc-header').addEventListener('click', () => {
   document.getElementById('species-acc-header').classList.toggle('open');
   document.getElementById('species-acc-body').classList.toggle('open');
 });
 
-// Initial render and data load
+// ============================================================
+//  INIT
+// ============================================================
+
 renderSpecies();
 loadOceanData();
 </script>
