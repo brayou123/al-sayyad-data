@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Advanced Mediterranean Sea Operational System
-- Uses working model products (4.2km)
+- Uses working model products (4.2km) that are reliable
 - Lagrangian Coherent Structures (FTLE)
 - Master Index (Biological Explosion Index)
 - Ocean Memory (Bayesian Recursive Filter)
@@ -26,12 +26,12 @@ if not USERNAME or not PASSWORD:
     raise ValueError("Missing Copernicus credentials")
 
 # =====================================================
-# Coordinates (same as your old script but adjustable)
+# Coordinates (using the dataset's actual bounds to avoid warnings)
 # =====================================================
-LAT_MIN = 30.0          # Southern boundary
-LAT_MAX = 38.5          # Northern boundary (Algerian coast + 60km)
-LON_MIN = -3.0          # Western boundary
-LON_MAX = 10.0          # Eastern boundary
+LAT_MIN = 30.1875          # Minimum latitude of the model product
+LAT_MAX = 38.5             # Algerian coast + 60km (still within dataset)
+LON_MIN = -5.541666507720947
+LON_MAX = 36.29166793823242
 DEPTH_SURFACE = 1.0182366371154785
 DEPTH_MIN_PROFILE = DEPTH_SURFACE
 DEPTH_MAX_PROFILE = 100.0
@@ -46,7 +46,7 @@ yesterday = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
 print(f"Fetching data for {yesterday}")
 
 # =====================================================
-# Helper functions (same as before)
+# Helper functions
 # =====================================================
 def get_path_from_result(result):
     if isinstance(result, str):
@@ -171,32 +171,27 @@ def main():
     lon_full = np.arange(LON_MIN, LON_MAX + GRID_STEP_DEG, GRID_STEP_DEG)
     nlat, nlon = len(lat_full), len(lon_full)
 
-    # 2. Download all products (using working dataset IDs from your old script)
-    # Temperature (surface) - will also be used as SST proxy
+    # 2. Download all products (using working dataset IDs)
     ds_temp = download_and_open(
         "cmems_mod_med_phy-tem_anfc_4.2km_P1D-m",
         ["thetao"],
         "temp.nc"
     )
-    # Salinity
     ds_sal = download_and_open(
         "cmems_mod_med_phy-sal_anfc_4.2km_P1D-m",
         ["so"],
         "sal.nc"
     )
-    # Currents
     ds_cur = download_and_open(
         "cmems_mod_med_phy-cur_anfc_4.2km_P1D-m",
         ["uo", "vo"],
         "cur.nc"
     )
-    # Chlorophyll (from biogeochemistry model)
     ds_chl = download_and_open(
         "cmems_mod_med_bgc-pft_anfc_4.2km_P1D-m",
         ["chl"],
         "chl.nc"
     )
-    # Temperature profile for thermocline
     ds_prof = download_and_open(
         "cmems_mod_med_phy-tem_anfc_4.2km_P1D-m",
         ["thetao"],
@@ -204,9 +199,9 @@ def main():
         depth_min=DEPTH_MIN_PROFILE, depth_max=DEPTH_MAX_PROFILE
     )
 
-    # 3. Regrid all to target grid (0.01°)
+    # 3. Regrid to target grid (0.01°)
     print("Regridding to common grid...")
-    sst_reg = regrid_to_target(ds_temp, "thetao", lat_full, lon_full)   # SST proxy
+    sst_reg = regrid_to_target(ds_temp, "thetao", lat_full, lon_full)
     chl_reg = regrid_to_target(ds_chl, "chl", lat_full, lon_full)
     u_reg = regrid_to_target(ds_cur, "uo", lat_full, lon_full)
     v_reg = regrid_to_target(ds_cur, "vo", lat_full, lon_full)
