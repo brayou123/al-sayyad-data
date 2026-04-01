@@ -15,91 +15,79 @@ jobs:
           python-version: '3.11'
       - run: pip install copernicusmarine xarray netCDF4 numpy
 
-      - name: Test all candidate datasets
+      - name: Login and explore
         env:
           COPERNICUSMARINE_USERNAME: ${{ secrets.COPERNICUS_USER }}
           COPERNICUSMARINE_PASSWORD: ${{ secrets.COPERNICUS_PASS }}
         run: |
           python3 << 'EOF'
-          import os, copernicusmarine as cm, xarray as xr
-          from datetime import datetime, timedelta
+          import os
+          import copernicusmarine as cm
 
           U = os.environ["COPERNICUSMARINE_USERNAME"]
           P = os.environ["COPERNICUSMARINE_PASSWORD"]
 
-          # منطقة صغيرة جداً للاختبار السريع - شرشال فقط
-          TEST = dict(
-              minimum_longitude=1.5, maximum_longitude=2.5,
-              minimum_latitude=36.2, maximum_latitude=36.8,
-              start_datetime="2025-03-28", end_datetime="2025-03-28",
-              username=U, password=P,
-          )
+          print("=== STEP 1: LOGIN TEST ===")
+          try:
+              cm.login(username=U, password=P, overwrite_configuration_file=True)
+              print("LOGIN OK")
+          except Exception as e:
+              print(f"LOGIN FAIL: {e}")
 
-          candidates = [
-              # SST 1km
-              ("SST_MED_SST_L4_NRT_OBSERVATIONS_010_004",
-               "analysed_sst", "SST 1km NRT"),
-              # Chlorophyll 1km multi-sensor L4
-              ("cmems_obs-oc_med_bgc-plankton_nrt_l4-multi-1km_P1D-m",
-               "CHL", "CHL 1km L4 NRT"),
-              # Chlorophyll alternative ID
-              ("cmems_obs-oc_med_bgc-plankton_nrt_l4-gapfree-multi-1km_P1D-m",
-               "CHL", "CHL 1km gapfree NRT"),
-              # OLCI 300m L3
-              ("cmems_obs-oc_med_bgc-plankton_nrt_l3-olci-300m_P1D-m",
-               "CHL", "OLCI 300m L3 NRT"),
-              # Physics currents NRT 1/24deg
-              ("cmems_mod_med_phy_anfc_4.2km_P1D-m",
-               "uo", "Currents 4.2km (old working)"),
-              # Physics NRT higher res
-              ("cmems_mod_med_phy-cur_anfc_0.042deg_P1D-m",
-               "uo", "Currents 0.042deg NRT"),
-              # SST alternative
-              ("cmems_SST_MED_SST_L4_NRT_OBSERVATIONS_010_004_a",
-               "analysed_sst", "SST 1km alt ID"),
-          ]
+          print("\n=== STEP 2: DESCRIBE ALL (no filter) ===")
+          try:
+              cat = cm.describe(include_datasets=True)
+              print(f"Type: {type(cat)}")
 
-          results = []
-          for dataset_id, var, label in candidates:
+              # اذا كان dict
+              if isinstance(cat, dict):
+                  print(f"Keys: {list(cat.keys())[:10]}")
+
+              # اذا كان object
+              elif hasattr(cat, 'products'):
+                  products = cat.products
+                  print(f"Total products: {len(products)}")
+                  with open("datasets_found.txt", "w") as f:
+                      for p in products:
+                          pid = getattr(p, 'product_id', str(p))
+                          f.write(f"PRODUCT: {pid}\n")
+                          if hasattr(p, 'datasets'):
+                              for d in p.datasets:
+                                  did = getattr(d, 'dataset_id', str(d))
+                                  f.write(f"  DATASET: {did}\n")
+                                  # ابحث عن المتوسط و الدقة العالية
+                                  did_lower = did.lower()
+                                  if any(k in did_lower for k in ['med','sst','oc','olci','colour','color']):
+                                      f.write(f"  *** RELEVANT ***\n")
+                  print("Saved to datasets_found.txt")
+
+              else:
+                  print(f"Unknown type: {type(cat)}")
+                  print(str(cat)[:500])
+
+          except Exception as e:
+              print(f"DESCRIBE FAIL: {e}")
+              import traceback
+              traceback.print_exc()
+
+          print("\n=== STEP 3: DESCRIBE WITH CONTAINS ===")
+          for keyword in ["mediterranean", "SST", "OLCI"]:
               try:
-                  r = cm.subset(
-                      dataset_id=dataset_id,
-                      variables=[var],
-                      output_filename=f"test_{dataset_id[:20]}.nc",
-                      **TEST
-                  )
-                  path = r if isinstance(r, str) else getattr(r, 'filenames', [None])[0]
-                  ds = xr.open_dataset(path)
-                  dims = dict(ds.dims)
-                  print(f"OK  | {label}")
-                  print(f"    ID: {dataset_id}")
-                  print(f"    var={var}  dims={dims}")
-                  results.append(("OK", label, dataset_id, var, str(dims)))
+                  r = cm.describe(contains=[keyword], include_datasets=True)
+                  print(f"\nKeyword '{keyword}':")
+                  print(f"  Type: {type(r)}")
+                  if hasattr(r, 'products'):
+                      print(f"  Products found: {len(r.products)}")
+                      for p in r.products[:5]:
+                          print(f"    - {getattr(p, 'product_id', p)}")
               except Exception as e:
-                  msg = str(e)[:120]
-                  print(f"FAIL| {label}")
-                  print(f"    ID: {dataset_id}")
-                  print(f"    ERR: {msg}")
-                  results.append(("FAIL", label, dataset_id, var, msg))
-
-          with open("datasets_found.txt", "w") as f:
-              f.write("COPERNICUS DATASET TEST RESULTS\n")
-              f.write("="*60 + "\n\n")
-              for status, label, did, var, info in results:
-                  f.write(f"[{status}] {label}\n")
-                  f.write(f"  dataset_id : {did}\n")
-                  f.write(f"  variable   : {var}\n")
-                  f.write(f"  info       : {info}\n\n")
-
-          print("\n--- SUMMARY ---")
-          for status, label, *_ in results:
-              print(f"  [{status}] {label}")
+                  print(f"  FAIL: {e}")
           EOF
 
-      - name: Commit results
+      - name: Commit
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git add datasets_found.txt
-          git commit -m "Dataset test results $(date +'%Y-%m-%d')" || echo "Nothing to commit"
+          git add datasets_found.txt || true
+          git commit -m "Explore results $(date +'%Y-%m-%d %H:%M')" || echo "Nothing"
           git push
