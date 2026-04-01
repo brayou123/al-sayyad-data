@@ -2,7 +2,7 @@ name: Fetch Copernicus Data
 
 on:
   schedule:
-    - cron: '0 5 * * *'
+    - cron: '0 15 * * *'
   workflow_dispatch:
 
 jobs:
@@ -15,7 +15,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install copernicusmarine xarray netCDF4 numpy h5py scipy dask
+      - name: Install dependencies
+        run: pip install copernicusmarine xarray netCDF4 numpy scipy
       - name: Debug credentials (check if secrets are available)
         run: |
           echo "Username length: ${#COPERNICUSMARINE_USERNAME}"
@@ -28,10 +29,10 @@ jobs:
         env:
           COPERNICUSMARINE_USERNAME: ${{ secrets.COPERNICUS_USER }}
           COPERNICUSMARINE_PASSWORD: ${{ secrets.COPERNICUS_PASS }}
-      - name: Commit and push data.json
+      - name: Commit and push data files
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git add data.json
+          git add data.bio ocean_memory.npy
           git commit -m "Update ocean data $(date +'%Y-%m-%d')" || exit 0
           git push
