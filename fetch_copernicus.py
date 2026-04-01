@@ -13,7 +13,6 @@ import numpy as np
 import xarray as xr
 from datetime import datetime, timedelta
 from copernicusmarine import subset
-import scipy.ndimage as ndimage
 from scipy.interpolate import RegularGridInterpolator
 import struct
 
@@ -79,8 +78,11 @@ def download_and_open(dataset_id, variables, filename, depth_min=None, depth_max
     return xr.open_dataset(path, engine='netcdf4')
 
 def regrid_to_target(ds, var_name, target_lat, target_lon):
-    """Regrid a 2D field to a regular lat/lon grid using bilinear interpolation."""
-    # Get original grid
+    """
+    Regrid a 2D field to a regular lat/lon grid using bilinear interpolation.
+    Works with data that may have extra dimensions (time, depth) of size 1.
+    """
+    # Get original grid coordinates
     if 'latitude' in ds.dims:
         orig_lat = ds.latitude.values
         orig_lon = ds.longitude.values
@@ -90,10 +92,13 @@ def regrid_to_target(ds, var_name, target_lat, target_lon):
     else:
         raise ValueError("Cannot find latitude/longitude dimensions")
     
+    # Get data and squeeze to remove any dimensions of size 1
     data = ds[var_name].values
-    # If time dimension exists, take first time step
-    if data.ndim == 3:
-        data = data[0]
+    data = np.squeeze(data)   # remove any singleton dimensions (time, depth, etc.)
+    
+    # After squeeze, we expect a 2D array (lat, lon)
+    if data.ndim != 2:
+        raise ValueError(f"Data has {data.ndim} dimensions after squeeze; expected 2")
     
     # Create interpolator
     interp = RegularGridInterpolator(
@@ -171,27 +176,36 @@ def main():
     lon_full = np.arange(LON_MIN, LON_MAX + GRID_STEP_DEG, GRID_STEP_DEG)
     nlat, nlon = len(lat_full), len(lon_full)
 
-    # 2. Download all products (using working dataset IDs)
+    # 2. Download all products (only surface depth for 2D fields, full depth for profile)
+    # Temperature (surface)
     ds_temp = download_and_open(
         "cmems_mod_med_phy-tem_anfc_4.2km_P1D-m",
         ["thetao"],
-        "temp.nc"
+        "temp.nc",
+        depth_min=DEPTH_SURFACE, depth_max=DEPTH_SURFACE
     )
+    # Salinity (surface)
     ds_sal = download_and_open(
         "cmems_mod_med_phy-sal_anfc_4.2km_P1D-m",
         ["so"],
-        "sal.nc"
+        "sal.nc",
+        depth_min=DEPTH_SURFACE, depth_max=DEPTH_SURFACE
     )
+    # Currents (surface)
     ds_cur = download_and_open(
         "cmems_mod_med_phy-cur_anfc_4.2km_P1D-m",
         ["uo", "vo"],
-        "cur.nc"
+        "cur.nc",
+        depth_min=DEPTH_SURFACE, depth_max=DEPTH_SURFACE
     )
+    # Chlorophyll (surface)
     ds_chl = download_and_open(
         "cmems_mod_med_bgc-pft_anfc_4.2km_P1D-m",
         ["chl"],
-        "chl.nc"
+        "chl.nc",
+        depth_min=DEPTH_SURFACE, depth_max=DEPTH_SURFACE
     )
+    # Temperature profile (full depth 0-100m)
     ds_prof = download_and_open(
         "cmems_mod_med_phy-tem_anfc_4.2km_P1D-m",
         ["thetao"],
@@ -208,14 +222,21 @@ def main():
     sal_reg = regrid_to_target(ds_sal, "so", lat_full, lon_full)
 
     # 4. Thermocline from 3D profile
-    depth_vals = ds_prof.depth.values
-    temp_4d = ds_prof.thetao.values
-    temp_3d = temp_4d[0]
-    grad = np.abs(np.diff(temp_3d, axis=0))
-    thermo_idx = np.argmax(grad, axis=0)
-    depth_upper = depth_vals[:-1]
-    depth_lower = depth_vals[1:]
-    thermo_raw = (depth_upper[thermo_idx] + depth_lower[thermo_idx]) / 2
+    # Get 3D temperature (depth, lat, lon)
+    temp_3d = ds_prof.thetao.values
+    # Squeeze to remove time if present
+    temp_3d = np.squeeze(temp_3d)
+    if temp_3d.ndim == 3:
+        # Assuming dimensions: (depth, lat, lon)
+        depth_vals = ds_prof.depth.values
+        grad = np.abs(np.diff(temp_3d, axis=0))
+        thermo_idx = np.argmax(grad, axis=0)
+        depth_upper = depth_vals[:-1]
+        depth_lower = depth_vals[1:]
+        thermo_raw = (depth_upper[thermo_idx] + depth_lower[thermo_idx]) / 2
+    else:
+        raise ValueError("Profile data is not 3D after squeezing")
+
     # Regrid thermocline (nearest neighbor)
     orig_lat = ds_prof.latitude.values
     orig_lon = ds_prof.longitude.values
