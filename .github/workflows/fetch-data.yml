@@ -32,6 +32,6 @@ jobs:
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git add data.bio ocean_memory.npy
+          git add data.json data_zone2.json
           git commit -m "Update ocean data $(date +'%Y-%m-%d')" || exit 0
           git push
