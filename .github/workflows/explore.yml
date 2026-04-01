@@ -1,0 +1,82 @@
+name: Explore Copernicus Datasets
+
+on:
+  workflow_dispatch:
+
+jobs:
+  explore:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install copernicusmarine
+
+      - name: Search for high-resolution datasets
+        env:
+          COPERNICUSMARINE_USERNAME: ${{ secrets.COPERNICUS_USER }}
+          COPERNICUSMARINE_PASSWORD: ${{ secrets.COPERNICUS_PASS }}
+        run: |
+          python3 << 'EOF'
+          import subprocess, json, sys
+
+          def run(label, keywords):
+              print(f"\n{'='*60}")
+              print(f"SEARCHING: {label}")
+              print('='*60)
+              result = subprocess.run(
+                  ["copernicusmarine", "describe", "--include-datasets",
+                   "--contains"] + keywords,
+                  capture_output=True, text=True
+              )
+              print(result.stdout[:8000] if result.stdout else "No output")
+              if result.stderr:
+                  print("STDERR:", result.stderr[:2000])
+
+          run("SST L4 NRT Mediterranean 1km",
+              ["SST", "MED", "L4", "NRT"])
+
+          run("Ocean Colour Chlorophyll Mediterranean 1km",
+              ["OCEANCOLOUR", "MED", "BGC", "L4", "NRT"])
+
+          run("OLCI 300m Mediterranean",
+              ["OLCI", "300"])
+
+          run("Physics currents Mediterranean NRT",
+              ["MEDSEA", "ANALYSISFORECAST", "PHY"])
+
+          print("\nDONE")
+          EOF
+
+      - name: Save results to file
+        run: |
+          python3 << 'EOF'
+          import subprocess
+
+          with open("datasets_found.txt", "w") as out:
+              for label, keywords in [
+                  ("SST L4 NRT Mediterranean",    ["SST","MED","L4","NRT"]),
+                  ("Chlorophyll L4 NRT Med",       ["OCEANCOLOUR","MED","BGC","L4","NRT"]),
+                  ("OLCI 300m",                    ["OLCI","300"]),
+                  ("Physics currents Med NRT",     ["MEDSEA","ANALYSISFORECAST","PHY"]),
+              ]:
+                  out.write(f"\n{'='*60}\n{label}\n{'='*60}\n")
+                  r = subprocess.run(
+                      ["copernicusmarine", "describe",
+                       "--include-datasets", "--contains"] + keywords,
+                      capture_output=True, text=True
+                  )
+                  out.write(r.stdout[:10000] if r.stdout else "No output\n")
+          print("Saved to datasets_found.txt")
+          EOF
+
+      - name: Commit results
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add datasets_found.txt
+          git commit -m "Copernicus dataset exploration results" || echo "Nothing to commit"
+          git push
