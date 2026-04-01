@@ -1,20 +1,38 @@
+COPERNICUS DATASET TEST RESULTS
+============================================================
 
-============================================================
-SST L4 NRT Mediterranean
-============================================================
-No output
+[FAIL] SST 1km NRT
+  dataset_id : SST_MED_SST_L4_NRT_OBSERVATIONS_010_004
+  variable   : analysed_sst
+  info       : SST_MED_SST_L4_NRT_OBSERVATIONS_010_004 Please check that the dataset exists and the input datasetID is correct.
 
-============================================================
-Chlorophyll L4 NRT Med
-============================================================
-No output
+[FAIL] CHL 1km L4 NRT
+  dataset_id : cmems_obs-oc_med_bgc-plankton_nrt_l4-multi-1km_P1D-m
+  variable   : CHL
+  info       : cmems_obs-oc_med_bgc-plankton_nrt_l4-multi-1km_P1D-m Please check that the dataset exists and the input datasetID is cor
 
-============================================================
-OLCI 300m
-============================================================
-No output
+[FAIL] CHL 1km gapfree NRT
+  dataset_id : cmems_obs-oc_med_bgc-plankton_nrt_l4-gapfree-multi-1km_P1D-m
+  variable   : CHL
+  info       : cmems_obs-oc_med_bgc-plankton_nrt_l4-gapfree-multi-1km_P1D-m Please check that the dataset exists and the input datasetI
 
-============================================================
-Physics currents Med NRT
-============================================================
-No output
+[FAIL] OLCI 300m L3 NRT
+  dataset_id : cmems_obs-oc_med_bgc-plankton_nrt_l3-olci-300m_P1D-m
+  variable   : CHL
+  info       : cmems_obs-oc_med_bgc-plankton_nrt_l3-olci-300m_P1D-m Please check that the dataset exists and the input datasetID is cor
+
+[FAIL] Currents 4.2km (old working)
+  dataset_id : cmems_mod_med_phy_anfc_4.2km_P1D-m
+  variable   : uo
+  info       : cmems_mod_med_phy_anfc_4.2km_P1D-m Please check that the dataset exists and the input datasetID is correct.
+
+[FAIL] Currents 0.042deg NRT
+  dataset_id : cmems_mod_med_phy-cur_anfc_0.042deg_P1D-m
+  variable   : uo
+  info       : cmems_mod_med_phy-cur_anfc_0.042deg_P1D-m Please check that the dataset exists and the input datasetID is correct.
+
+[FAIL] SST 1km alt ID
+  dataset_id : cmems_SST_MED_SST_L4_NRT_OBSERVATIONS_010_004_a
+  variable   : analysed_sst
+  info       : cmems_SST_MED_SST_L4_NRT_OBSERVATIONS_010_004_a Please check that the dataset exists and the input datasetID is correct.
+
