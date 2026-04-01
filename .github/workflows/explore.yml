@@ -1,10 +1,10 @@
-name: Explore Copernicus Datasets
+name: Test Copernicus Datasets
 
 on:
   workflow_dispatch:
 
 jobs:
-  explore:
+  test:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -13,64 +13,87 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install copernicusmarine
+      - run: pip install copernicusmarine xarray netCDF4 numpy
 
-      - name: Search for high-resolution datasets
+      - name: Test all candidate datasets
         env:
           COPERNICUSMARINE_USERNAME: ${{ secrets.COPERNICUS_USER }}
           COPERNICUSMARINE_PASSWORD: ${{ secrets.COPERNICUS_PASS }}
         run: |
           python3 << 'EOF'
-          import subprocess, json, sys
+          import os, copernicusmarine as cm, xarray as xr
+          from datetime import datetime, timedelta
 
-          def run(label, keywords):
-              print(f"\n{'='*60}")
-              print(f"SEARCHING: {label}")
-              print('='*60)
-              result = subprocess.run(
-                  ["copernicusmarine", "describe", "--include-datasets",
-                   "--contains"] + keywords,
-                  capture_output=True, text=True
-              )
-              print(result.stdout[:8000] if result.stdout else "No output")
-              if result.stderr:
-                  print("STDERR:", result.stderr[:2000])
+          U = os.environ["COPERNICUSMARINE_USERNAME"]
+          P = os.environ["COPERNICUSMARINE_PASSWORD"]
 
-          run("SST L4 NRT Mediterranean 1km",
-              ["SST", "MED", "L4", "NRT"])
+          # منطقة صغيرة جداً للاختبار السريع - شرشال فقط
+          TEST = dict(
+              minimum_longitude=1.5, maximum_longitude=2.5,
+              minimum_latitude=36.2, maximum_latitude=36.8,
+              start_datetime="2025-03-28", end_datetime="2025-03-28",
+              username=U, password=P,
+          )
 
-          run("Ocean Colour Chlorophyll Mediterranean 1km",
-              ["OCEANCOLOUR", "MED", "BGC", "L4", "NRT"])
+          candidates = [
+              # SST 1km
+              ("SST_MED_SST_L4_NRT_OBSERVATIONS_010_004",
+               "analysed_sst", "SST 1km NRT"),
+              # Chlorophyll 1km multi-sensor L4
+              ("cmems_obs-oc_med_bgc-plankton_nrt_l4-multi-1km_P1D-m",
+               "CHL", "CHL 1km L4 NRT"),
+              # Chlorophyll alternative ID
+              ("cmems_obs-oc_med_bgc-plankton_nrt_l4-gapfree-multi-1km_P1D-m",
+               "CHL", "CHL 1km gapfree NRT"),
+              # OLCI 300m L3
+              ("cmems_obs-oc_med_bgc-plankton_nrt_l3-olci-300m_P1D-m",
+               "CHL", "OLCI 300m L3 NRT"),
+              # Physics currents NRT 1/24deg
+              ("cmems_mod_med_phy_anfc_4.2km_P1D-m",
+               "uo", "Currents 4.2km (old working)"),
+              # Physics NRT higher res
+              ("cmems_mod_med_phy-cur_anfc_0.042deg_P1D-m",
+               "uo", "Currents 0.042deg NRT"),
+              # SST alternative
+              ("cmems_SST_MED_SST_L4_NRT_OBSERVATIONS_010_004_a",
+               "analysed_sst", "SST 1km alt ID"),
+          ]
 
-          run("OLCI 300m Mediterranean",
-              ["OLCI", "300"])
-
-          run("Physics currents Mediterranean NRT",
-              ["MEDSEA", "ANALYSISFORECAST", "PHY"])
-
-          print("\nDONE")
-          EOF
-
-      - name: Save results to file
-        run: |
-          python3 << 'EOF'
-          import subprocess
-
-          with open("datasets_found.txt", "w") as out:
-              for label, keywords in [
-                  ("SST L4 NRT Mediterranean",    ["SST","MED","L4","NRT"]),
-                  ("Chlorophyll L4 NRT Med",       ["OCEANCOLOUR","MED","BGC","L4","NRT"]),
-                  ("OLCI 300m",                    ["OLCI","300"]),
-                  ("Physics currents Med NRT",     ["MEDSEA","ANALYSISFORECAST","PHY"]),
-              ]:
-                  out.write(f"\n{'='*60}\n{label}\n{'='*60}\n")
-                  r = subprocess.run(
-                      ["copernicusmarine", "describe",
-                       "--include-datasets", "--contains"] + keywords,
-                      capture_output=True, text=True
+          results = []
+          for dataset_id, var, label in candidates:
+              try:
+                  r = cm.subset(
+                      dataset_id=dataset_id,
+                      variables=[var],
+                      output_filename=f"test_{dataset_id[:20]}.nc",
+                      **TEST
                   )
-                  out.write(r.stdout[:10000] if r.stdout else "No output\n")
-          print("Saved to datasets_found.txt")
+                  path = r if isinstance(r, str) else getattr(r, 'filenames', [None])[0]
+                  ds = xr.open_dataset(path)
+                  dims = dict(ds.dims)
+                  print(f"OK  | {label}")
+                  print(f"    ID: {dataset_id}")
+                  print(f"    var={var}  dims={dims}")
+                  results.append(("OK", label, dataset_id, var, str(dims)))
+              except Exception as e:
+                  msg = str(e)[:120]
+                  print(f"FAIL| {label}")
+                  print(f"    ID: {dataset_id}")
+                  print(f"    ERR: {msg}")
+                  results.append(("FAIL", label, dataset_id, var, msg))
+
+          with open("datasets_found.txt", "w") as f:
+              f.write("COPERNICUS DATASET TEST RESULTS\n")
+              f.write("="*60 + "\n\n")
+              for status, label, did, var, info in results:
+                  f.write(f"[{status}] {label}\n")
+                  f.write(f"  dataset_id : {did}\n")
+                  f.write(f"  variable   : {var}\n")
+                  f.write(f"  info       : {info}\n\n")
+
+          print("\n--- SUMMARY ---")
+          for status, label, *_ in results:
+              print(f"  [{status}] {label}")
           EOF
 
       - name: Commit results
@@ -78,5 +101,5 @@ jobs:
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           git add datasets_found.txt
-          git commit -m "Copernicus dataset exploration results" || echo "Nothing to commit"
+          git commit -m "Dataset test results $(date +'%Y-%m-%d')" || echo "Nothing to commit"
           git push
