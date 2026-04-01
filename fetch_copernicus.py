@@ -295,10 +295,10 @@ def main():
     # 2. Download all products
     # SST L4 (1km)
     ds_sst = download_and_open(
-        "cmems_SST_MED_SST_L4_NRT_OBSERVATIONS_010_004_202311",
-        ["analysed_sst"],
-        "sst.nc"
-    )
+    "SST_MED_SST_L4_NRT_OBSERVATIONS_010_004",
+    ["analysed_sst"],
+    "sst.nc"
+)
 
     # Ocean colour plankton (1km multi-sensor)
     ds_chl = download_and_open(
