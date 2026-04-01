@@ -15,8 +15,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install dependencies
-        run: pip install copernicusmarine xarray netCDF4 numpy scipy
+      - run: pip install copernicusmarine xarray netCDF4 numpy scipy h5py
       - name: Debug credentials (check if secrets are available)
         run: |
           echo "Username length: ${#COPERNICUSMARINE_USERNAME}"
