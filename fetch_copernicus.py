@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
 Advanced Mediterranean Sea Operational System
-- Daily data retrieval from Copernicus Marine
+- Uses working model products (4.2km)
 - Lagrangian Coherent Structures (FTLE)
 - Master Index (Biological Explosion Index)
 - Ocean Memory (Bayesian Recursive Filter)
-- High-resolution (300m) enhancement for user-defined region
 - Output: compact binary file (.bio)
 """
 
@@ -27,7 +26,7 @@ if not USERNAME or not PASSWORD:
     raise ValueError("Missing Copernicus credentials")
 
 # =====================================================
-# Coordinates (you can change these)
+# Coordinates (same as your old script but adjustable)
 # =====================================================
 LAT_MIN = 30.0          # Southern boundary
 LAT_MAX = 38.5          # Northern boundary (Algerian coast + 60km)
@@ -37,13 +36,8 @@ DEPTH_SURFACE = 1.0182366371154785
 DEPTH_MIN_PROFILE = DEPTH_SURFACE
 DEPTH_MAX_PROFILE = 100.0
 
-# Grid resolution for full coverage (0.01° ≈ 1.1 km)
+# Grid resolution for final output (0.01° ≈ 1.1 km)
 GRID_STEP_DEG = 0.01
-
-# High-resolution region (e.g., Cherchell 100km radius)
-HR_LAT_CENTER = float(os.environ.get("HR_LAT_CENTER", 36.6))
-HR_LON_CENTER = float(os.environ.get("HR_LON_CENTER", 2.2))
-HR_RADIUS_KM = float(os.environ.get("HR_RADIUS_KM", 100.0))
 
 # =====================================================
 # Time
@@ -83,28 +77,6 @@ def download_and_open(dataset_id, variables, filename, depth_min=None, depth_max
         raise RuntimeError(f"File {path} is empty (size 0)")
     print(f"  Downloaded {path} ({file_size} bytes)")
     return xr.open_dataset(path, engine='netcdf4')
-
-def download_high_res(bbox, filename):
-    """Download high-resolution (300m) OLCI product for a small bounding box."""
-    print(f"Downloading high-res (300m) for region: {bbox}")
-    try:
-        result = subset(
-            dataset_id="cmems_obs-oc_med_bgc-plankton_nrt_l3-olci-300m_P1D",
-            variables=["CHL"],
-            minimum_longitude=bbox[0], maximum_longitude=bbox[1],
-            minimum_latitude=bbox[2], maximum_latitude=bbox[3],
-            start_datetime=yesterday, end_datetime=yesterday,
-            username=USERNAME, password=PASSWORD,
-            output_filename=filename
-        )
-        path = get_path_from_result(result)
-        if not os.path.exists(path) or os.path.getsize(path) == 0:
-            raise RuntimeError(f"High-res file {path} missing or empty")
-        print(f"  Downloaded high-res: {path} ({os.path.getsize(path)} bytes)")
-        return xr.open_dataset(path, engine='netcdf4')
-    except Exception as e:
-        print(f"  High-res download failed: {e}")
-        return None
 
 def regrid_to_target(ds, var_name, target_lat, target_lon):
     """Regrid a 2D field to a regular lat/lon grid using bilinear interpolation."""
@@ -191,99 +163,6 @@ def save_binary(output_path, header, layers):
             f.write(data_flat.tobytes())
 
 # =====================================================
-# High-resolution processing
-# =====================================================
-def process_high_res(lat_full, lon_full, chl_full):
-    """
-    Download and integrate high-resolution (300m) OLCI data for user-defined region.
-    Returns an enhancement layer (2D array same shape as full grid) or None if failed.
-    """
-    if HR_RADIUS_KM <= 0:
-        return None
-
-    # Compute bounding box around center
-    lat_hr_min = HR_LAT_CENTER - (HR_RADIUS_KM / 111.0)
-    lat_hr_max = HR_LAT_CENTER + (HR_RADIUS_KM / 111.0)
-    lon_hr_min = HR_LON_CENTER - (HR_RADIUS_KM / (111.0 * np.cos(np.deg2rad(HR_LAT_CENTER))))
-    lon_hr_max = HR_LON_CENTER + (HR_RADIUS_KM / (111.0 * np.cos(np.deg2rad(HR_LAT_CENTER))))
-
-    # Ensure bounds within full domain
-    lon_hr_min = max(LON_MIN, lon_hr_min)
-    lon_hr_max = min(LON_MAX, lon_hr_max)
-    lat_hr_min = max(LAT_MIN, lat_hr_min)
-    lat_hr_max = min(LAT_MAX, lat_hr_max)
-
-    if lon_hr_min >= lon_hr_max or lat_hr_min >= lat_hr_max:
-        print("High-res region is outside full domain. Skipping.")
-        return None
-
-    bbox = (lon_hr_min, lon_hr_max, lat_hr_min, lat_hr_max)
-    ds_hr = download_high_res(bbox, "chl_300m.nc")
-    if ds_hr is None:
-        print("High-res data not available for today.")
-        return None
-
-    # Determine variable name (usually 'CHL')
-    chl_var = "CHL" if "CHL" in ds_hr.variables else None
-    if chl_var is None:
-        for var in ds_hr.variables:
-            if "CHL" in var or "chl" in var:
-                chl_var = var
-                break
-    if chl_var is None:
-        print("No chlorophyll variable found in high-res file.")
-        return None
-
-    # Extract high-res data (2D)
-    hr_chl = ds_hr[chl_var].values
-    if hr_chl.ndim == 3:
-        hr_chl = hr_chl[0]  # first time
-    # Get original high-res grid
-    hr_lat = ds_hr.latitude.values if 'latitude' in ds_hr.dims else ds_hr.lat.values
-    hr_lon = ds_hr.longitude.values if 'longitude' in ds_hr.dims else ds_hr.lon.values
-
-    # Create a mask for the high-res region in the full grid
-    mask = (lat_full >= lat_hr_min) & (lat_full <= lat_hr_max)
-    mask_lon = (lon_full >= lon_hr_min) & (lon_full <= lon_hr_max)
-    # Indices
-    lat_idx = np.where(mask)[0]
-    lon_idx = np.where(mask_lon)[0]
-    if len(lat_idx) == 0 or len(lon_idx) == 0:
-        return None
-
-    # Regrid high-res data to the full grid subregion using bilinear interpolation
-    # Create a fine target grid for the subregion (same resolution as full grid)
-    sub_lat = lat_full[lat_idx[0]:lat_idx[-1]+1]
-    sub_lon = lon_full[lon_idx[0]:lon_idx[-1]+1]
-    # Build interpolator for high-res data
-    interp_hr = RegularGridInterpolator(
-        (hr_lat, hr_lon), hr_chl,
-        method='linear', bounds_error=False, fill_value=np.nan
-    )
-    lat_mesh, lon_mesh = np.meshgrid(sub_lat, sub_lon, indexing='ij')
-    points = np.stack([lat_mesh.ravel(), lon_mesh.ravel()], axis=-1)
-    hr_regridded = interp_hr(points).reshape(len(sub_lat), len(sub_lon))
-
-    # Replace NaN in high-res with values from the full chlorophyll field
-    full_sub = chl_full[lat_idx[0]:lat_idx[-1]+1, lon_idx[0]:lon_idx[-1]+1]
-    nan_mask = np.isnan(hr_regridded)
-    hr_regridded[nan_mask] = full_sub[nan_mask]
-
-    # Create enhancement layer: ratio of high-res to full (or difference)
-    # We'll compute a factor to boost hotspot in that region
-    # Simple approach: enhancement = 1 + (hr_regridded / full_sub) * 0.5, capped.
-    # But to avoid division by zero, use full_sub as denominator with small epsilon.
-    epsilon = 1e-6
-    enhancement_factor = 1 + 0.5 * (hr_regridded / (full_sub + epsilon))
-    enhancement_factor = np.clip(enhancement_factor, 1, 2)
-
-    # Build full-sized enhancement array (default 1)
-    enhancement = np.ones_like(chl_full)
-    enhancement[lat_idx[0]:lat_idx[-1]+1, lon_idx[0]:lon_idx[-1]+1] = enhancement_factor
-
-    return enhancement
-
-# =====================================================
 # Main processing
 # =====================================================
 def main():
@@ -292,40 +171,32 @@ def main():
     lon_full = np.arange(LON_MIN, LON_MAX + GRID_STEP_DEG, GRID_STEP_DEG)
     nlat, nlon = len(lat_full), len(lon_full)
 
-    # 2. Download all products
-    # SST L4 (1km)
-    ds_sst = download_and_open(
-    "SST_MED_SST_L4_NRT_OBSERVATIONS_010_004",
-    ["analysed_sst"],
-    "sst.nc"
-)
-
-    # Ocean colour plankton (1km multi-sensor)
-    ds_chl = download_and_open(
-        "cmems_obs-oc_med_bgc-plankton_nrt_l4-gapfree-multi-1km_P1D",
-        ["CHL"],
-        "chl.nc"
+    # 2. Download all products (using working dataset IDs from your old script)
+    # Temperature (surface) - will also be used as SST proxy
+    ds_temp = download_and_open(
+        "cmems_mod_med_phy-tem_anfc_4.2km_P1D-m",
+        ["thetao"],
+        "temp.nc"
     )
-    # Fallback: rename if variable name differs
-    if "CHL" not in ds_chl.variables:
-        for var in ds_chl.variables:
-            if "CHL" in var or "chl" in var:
-                ds_chl = ds_chl.rename({var: "CHL"})
-                break
-
-    # Currents (4.2km)
-    ds_cur = download_and_open(
-        "cmems_mod_med_phy-cur_anfc_4.2km_P1D-m",
-        ["uo", "vo"],
-        "cur.nc"
-    )
-    # Salinity (4.2km)
+    # Salinity
     ds_sal = download_and_open(
         "cmems_mod_med_phy-sal_anfc_4.2km_P1D-m",
         ["so"],
         "sal.nc"
     )
-    # Temperature profile (4.2km)
+    # Currents
+    ds_cur = download_and_open(
+        "cmems_mod_med_phy-cur_anfc_4.2km_P1D-m",
+        ["uo", "vo"],
+        "cur.nc"
+    )
+    # Chlorophyll (from biogeochemistry model)
+    ds_chl = download_and_open(
+        "cmems_mod_med_bgc-pft_anfc_4.2km_P1D-m",
+        ["chl"],
+        "chl.nc"
+    )
+    # Temperature profile for thermocline
     ds_prof = download_and_open(
         "cmems_mod_med_phy-tem_anfc_4.2km_P1D-m",
         ["thetao"],
@@ -333,10 +204,10 @@ def main():
         depth_min=DEPTH_MIN_PROFILE, depth_max=DEPTH_MAX_PROFILE
     )
 
-    # 3. Regrid to target grid (0.01°)
+    # 3. Regrid all to target grid (0.01°)
     print("Regridding to common grid...")
-    sst_reg = regrid_to_target(ds_sst, "analysed_sst", lat_full, lon_full)
-    chl_reg = regrid_to_target(ds_chl, "CHL", lat_full, lon_full)
+    sst_reg = regrid_to_target(ds_temp, "thetao", lat_full, lon_full)   # SST proxy
+    chl_reg = regrid_to_target(ds_chl, "chl", lat_full, lon_full)
     u_reg = regrid_to_target(ds_cur, "uo", lat_full, lon_full)
     v_reg = regrid_to_target(ds_cur, "vo", lat_full, lon_full)
     sal_reg = regrid_to_target(ds_sal, "so", lat_full, lon_full)
@@ -377,7 +248,7 @@ def main():
     du_dy = np.gradient(u_reg, axis=0) / dy_m
     vorticity = dv_dx - du_dy
 
-    # 8. Master Index (without high-res)
+    # 8. Master Index
     hotspot = compute_master_index(ftle_map, chl_pred, thermo_reg, vorticity)
 
     # 9. Ocean Memory
@@ -389,16 +260,7 @@ def main():
     ocean_memory = update_ocean_memory(prev_memory, hotspot, u_reg, v_reg)
     np.save(memory_file, ocean_memory)
 
-    # 10. High-resolution enhancement (300m)
-    high_res_enhancement = process_high_res(lat_full, lon_full, chl_reg)
-    if high_res_enhancement is not None:
-        # Apply enhancement to hotspot (optional: you can also keep separate layer)
-        hotspot_enhanced = hotspot * high_res_enhancement
-        hotspot_enhanced = np.clip(hotspot_enhanced, 0, 1)
-        # Use the enhanced version as the main hotspot
-        hotspot = hotspot_enhanced
-
-    # 11. Assemble layers for binary output
+    # 10. Assemble layers for binary output
     current_speed = np.sqrt(u_reg**2 + v_reg**2) * 1.944  # knots
     layers = {
         "hotspot": hotspot,
@@ -410,10 +272,8 @@ def main():
         "salinity": sal_reg,
         "ocean_memory": ocean_memory,
     }
-    if high_res_enhancement is not None:
-        layers["high_res_enhancement"] = high_res_enhancement
 
-    # 12. Save binary file
+    # 11. Save binary file
     header = {
         'version': 1,
         'nlat': nlat,
