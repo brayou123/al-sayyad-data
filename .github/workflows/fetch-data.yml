@@ -15,7 +15,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install copernicusmarine xarray netCDF4 numpy h5py
+      - run: pip install copernicusmarine xarray netCDF4 numpy h5py scipy dask
       - name: Debug credentials (check if secrets are available)
         run: |
           echo "Username length: ${#COPERNICUSMARINE_USERNAME}"
