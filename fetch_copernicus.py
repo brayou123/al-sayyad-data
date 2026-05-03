@@ -43,7 +43,7 @@ R2_LON_MAX =  3.6
 # Common depth settings
 # =====================================================
 DEPTH_SURFACE     = 1.0182366371154785
-DEPTH_MAX_PROFILE = 100.0
+DEPTH_MAX_PROFILE = 300.0
 
 # =====================================================
 # Date — yesterday
