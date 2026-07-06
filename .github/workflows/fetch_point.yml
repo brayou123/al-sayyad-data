@@ -18,6 +18,6 @@ jobs:
 
       - name: Run fetch_point
         env:
-          COPERNICUSMARINE_USERNAME: ${{ secrets.COPERNICUSMARINE_USERNAME }}
-          COPERNICUSMARINE_PASSWORD: ${{ secrets.COPERNICUSMARINE_PASSWORD }}
+          COPERNICUSMARINE_USERNAME: ${{ secrets.COPERNICUS_USER }}
+COPERNICUSMARINE_PASSWORD: ${{ secrets.COPERNICUS_PASS }}
         run: python fetch_point.py
