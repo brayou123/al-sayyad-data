@@ -1,7 +1,7 @@
 name: Fetch Point Data
 
 on:
-  workflow_dispatch:  # يشتغل يدوياً فقط عند الضغط عليه
+  workflow_dispatch:
 
 jobs:
   fetch:
@@ -19,5 +19,5 @@ jobs:
       - name: Run fetch_point
         env:
           COPERNICUSMARINE_USERNAME: ${{ secrets.COPERNICUS_USER }}
-COPERNICUSMARINE_PASSWORD: ${{ secrets.COPERNICUS_PASS }}
+          COPERNICUSMARINE_PASSWORD: ${{ secrets.COPERNICUS_PASS }}
         run: python fetch_point.py
