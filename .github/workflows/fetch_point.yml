@@ -1,0 +1,23 @@
+name: Fetch Point Data
+
+on:
+  workflow_dispatch:  # يشتغل يدوياً فقط عند الضغط عليه
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install copernicusmarine xarray netCDF4 numpy scipy h5py
+
+      - name: Run fetch_point
+        env:
+          COPERNICUSMARINE_USERNAME: ${{ secrets.COPERNICUSMARINE_USERNAME }}
+          COPERNICUSMARINE_PASSWORD: ${{ secrets.COPERNICUSMARINE_PASSWORD }}
+        run: python fetch_point.py
