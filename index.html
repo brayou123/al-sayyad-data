@@ -64,26 +64,6 @@
     color: var(--accent); text-shadow: 0 0 16px rgba(0,212,255,0.35);
     display: flex; align-items: center; gap: 12px;
   }
-  .data-switch {
-    display: flex;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 24px;
-    overflow: hidden;
-    font-size: 9px;
-    font-family: 'IBM Plex Mono', monospace;
-  }
-  .switch-option {
-    padding: 4px 12px;
-    cursor: pointer;
-    transition: all 0.2s;
-    color: var(--text-dim);
-  }
-  .switch-option.active {
-    background: var(--accent);
-    color: #000;
-    font-weight: 700;
-  }
   #gps-badge {
     display: flex; align-items: center; gap: 6px;
     font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: var(--text-dim);
@@ -324,10 +304,6 @@
   <div id="sheet-header">
     <div id="sheet-title">
       🎣 Hotspots
-      <div class="data-switch" id="data-switch">
-        <div class="switch-option active" data-file="data.json">Algerian Coast</div>
-        <div class="switch-option" data-file="data_zone2.json">Zone2 (300m)</div>
-      </div>
     </div>
     <div id="gps-badge">
       <div class="gps-dot" id="gps-dot"></div>
@@ -448,7 +424,8 @@ let userLat = null, userLon = null;
 let map, userMarker, radiusCircle;
 let hotspotResults = [];
 let animFrame;
-let oceanData = null;
+let hotspotsData = null;          // will hold the full JSON from hotspots.json
+let allHotspots = [];            // array of points from the file
 
 let species = JSON.parse(localStorage.getItem('hs_species') || 'null')
   || PREDEFINED.map(s => ({ ...s, ranges: { ...s.ranges }, selected: false, expanded: false }));
@@ -462,35 +439,6 @@ ALL_VARS.forEach(v => {
   ];
 });
 
-let currentDataSource = 'data.json';
-let currentZoneName = 'Algerian Coast';
-
-// HSI parameters
-const CRITICALITY = {
-  temperature:  'critical',
-  oxygen:       'critical',
-  salinity:     'important',
-  chlorophyll:  'moderate',
-  thermocline:  'moderate',
-  transparency: 'secondary',
-  currentSpeed: 'secondary',
-  front:        'bonus'
-};
-
-const GATE_TOLERANCE = {
-  critical:  0.05,
-  important: 0.15
-};
-
-const GMM_WEIGHTS = {
-  critical:  0.40,
-  important: 0.25,
-  moderate:  0.20,
-  secondary: 0.10,
-  bonus:     0.05
-};
-
-const MIN_SCORE_THRESHOLD = 0.60;
 const SEARCH_RADIUS_KM = 100;
 
 // ============================================================
@@ -513,117 +461,28 @@ function hexA(hex, alpha) {
 }
 
 // ============================================================
-//  HSI CORE
+//  DATA LOADING — hotspots.json
 // ============================================================
 
-function computeSI(val, lo, hi, vMin, vMax) {
-  if (val == null) return 0.5;
-  const rangeWidth = hi - lo || 1;
-  const decayMargin = rangeWidth * 0.30 || (vMax - vMin) * 0.1;
-  if (val < lo) return Math.max(0, 1 - (lo - val) / decayMargin);
-  if (val > hi) return Math.max(0, 1 - (val - hi) / decayMargin);
-  const center = (lo + hi) / 2;
-  const halfWidth = rangeWidth / 2 || 0.01;
-  return 0.70 + 0.30 * (1 - Math.abs(val - center) / halfWidth);
-}
-
-function matchSpecies(point, ranges, frontIntensity, thermoclineValue) {
-  const matchedVars = [];
-
-  // Hard Gate
-  for (const [key, criticality] of Object.entries(CRITICALITY)) {
-    const tolerance = GATE_TOLERANCE[criticality];
-    if (!tolerance) continue;
-    const range = ranges[key];
-    if (!range) continue;
-    const val = (key === 'thermocline') ? thermoclineValue : point[key];
-    if (val == null) continue;
-    const [lo, hi] = range;
-    const absoluteMargin = (hi - lo) * tolerance || 0.5;
-    if (val < lo - absoluteMargin || val > hi + absoluteMargin) {
-      return { score: 0, matchedVars: [], hardFail: key };
-    }
-  }
-
-  const si = {};
-  for (const v of ALL_VARS) {
-    if (v.key === 'thermocline') continue;
-    const range = ranges[v.key];
-    const lo = range ? range[0] : v.min;
-    const hi = range ? range[1] : v.max;
-    si[v.key] = computeSI(point[v.key], lo, hi, v.min, v.max);
-    if (si[v.key] >= 0.80) matchedVars.push(v.label);
-  }
-
-  const thermoV = ALL_VARS.find(v => v.key === 'thermocline');
-  if (ranges.thermocline && thermoclineValue != null) {
-    si.thermocline = computeSI(thermoclineValue, ranges.thermocline[0], ranges.thermocline[1], thermoV.min, thermoV.max);
-  } else {
-    si.thermocline = 0.70;
-  }
-  si.front = (frontIntensity != null) ? frontIntensity : 0.50;
-
-  const tiers = {
-    critical:  ['temperature', 'oxygen'],
-    important: ['salinity'],
-    moderate:  ['chlorophyll', 'thermocline'],
-    secondary: ['transparency', 'currentSpeed'],
-    bonus:     ['front']
-  };
-
-  const tierScores = {};
-  for (const [tier, keys] of Object.entries(tiers)) {
-    const product = keys.reduce((p, k) => p * Math.max(0.001, si[k] ?? 0.5), 1);
-    tierScores[tier] = Math.pow(product, 1 / keys.length);
-  }
-
-  const HSI = Object.entries(GMM_WEIGHTS).reduce((sum, [tier, weight]) => {
-    return sum + (tierScores[tier] ?? 0.5) * weight;
-  }, 0);
-
-  return { score: Math.min(1, HSI), matchedVars };
-}
-
-// ============================================================
-//  DATA LOADING
-// ============================================================
-
-async function loadOceanData(sourceFile = currentDataSource) {
+async function loadHotspotsData() {
   try {
-    const response = await fetch(sourceFile);
+    const response = await fetch('hotspots.json');
     if (!response.ok) throw new Error(`HTTP ${response.status} — file not found`);
     const json = await response.json();
 
-    const n = json.lat.length;
-    const points = [];
-    for (let i = 0; i < n; i++) {
-      points.push({
-        lat:           json.lat[i],
-        lon:           json.lon[i],
-        temperature:   json.temperature[i],
-        salinity:      json.salinity[i],
-        chlorophyll:   json.chlorophyll[i],
-        oxygen:        json.oxygen[i],
-        transparency:  json.transparency[i],
-        currentSpeed:  json.currentSpeed[i],
-        thermocline:   json.thermocline[i],
-        frontIntensity: json.frontIntensity ? json.frontIntensity[i] : 0.5
-      });
-    }
+    // The file contains: { timestamp, count, hotspots: [ { lat, lon, score, color, name, depth, species, data }, ... ] }
+    hotspotsData = json;
+    allHotspots = json.hotspots || [];
+    console.log(`Loaded ${allHotspots.length} hotspots — ${json.timestamp}`);
 
-    oceanData = {
-      timestamp:     json.timestamp,
-      resolution_km: json.resolution_km,
-      points
-    };
-
-    console.log(`Loaded ${oceanData.points.length} points — ${oceanData.timestamp} (${sourceFile})`);
-    document.getElementById('results-text').innerHTML = `✅ ${currentZoneName} loaded · ${oceanData.points.length} points · ${oceanData.timestamp}`;
+    document.getElementById('results-text').innerHTML =
+      `✅ Loaded ${allHotspots.length} pre‑computed hotspots · ${json.timestamp}`;
     enableSearchIfReady();
   } catch (err) {
-    console.error('Failed to load ocean data:', err);
-    document.getElementById('results-text').innerHTML = `❌ Failed to load ${currentZoneName} data. Check file availability.`;
-    oceanData = null;
+    console.error('Failed to load hotspots.json:', err);
+    document.getElementById('results-text').innerHTML = '❌ Failed to load hotspots.json. Check that the file exists.';
+    hotspotsData = null;
+    allHotspots = [];
     enableSearchIfReady();
   }
 }
@@ -645,7 +504,7 @@ function updateGPSDot(active) {
 }
 
 function enableSearchIfReady() {
-  if (userLat && oceanData) {
+  if (userLat && allHotspots.length) {
     document.getElementById('search-btn').disabled = false;
   } else if (!userLat) {
     document.getElementById('search-btn').disabled = true;
@@ -655,9 +514,9 @@ function enableSearchIfReady() {
       document.getElementById('results-text').innerHTML = '⚠️ Could not get location. Try reloading.';
     else
       document.getElementById('results-text').innerHTML = '📍 Waiting for location...';
-  } else if (!oceanData) {
+  } else if (!allHotspots.length) {
     document.getElementById('search-btn').disabled = true;
-    document.getElementById('results-text').innerHTML = `<div class="spinner"></div> Loading ${currentZoneName} data...`;
+    document.getElementById('results-text').innerHTML = '<div class="spinner"></div> Loading hotspots data...';
   }
 }
 
@@ -708,7 +567,7 @@ function initGPS() {
 }
 
 // ============================================================
-//  CLUSTERING
+//  CLUSTERING (identical to before, but now works on the point data)
 // ============================================================
 
 function clusterHotspots(rawPoints) {
@@ -732,22 +591,24 @@ function clusterHotspots(rawPoints) {
 
     const avgLat = members.reduce((s, p) => s + p.lat, 0) / members.length;
     const avgLon = members.reduce((s, p) => s + p.lon, 0) / members.length;
-    const avgMatch = members.reduce((s, p) => s + p.match, 0) / members.length;
-    const best = members.reduce((a, b) => b.match > a.match ? b : a);
+    const avgMatch = members.reduce((s, p) => s + p.score, 0) / members.length;
+    // best is the one with highest score
+    const best = members.reduce((a, b) => a.score > b.score ? a : b);
 
     const radiusKm = members.length === 1
       ? 0.5
       : Math.max(...members.map(p => haversineKm(avgLat, avgLon, p.lat, p.lon)));
 
+    // Combine species lists (from each point's "species" array)
     const speciesMap = {};
     members.forEach(p => {
-      (p.allSpecies || [{ name: p.name, color: p.color, match: p.match }]).forEach(sp => {
-        if (!speciesMap[sp.name] || sp.match > speciesMap[sp.name].match) {
-          speciesMap[sp.name] = sp;
+      (p.species || []).forEach(sp => {
+        if (!speciesMap[sp.id] || sp.score > speciesMap[sp.id].score) {
+          speciesMap[sp.id] = sp;
         }
       });
     });
-    const allSpecies = Object.values(speciesMap).sort((a, b) => b.match - a.match);
+    const allSpecies = Object.values(speciesMap).sort((a, b) => b.score - a.score);
 
     clusters.push({
       lat:       avgLat,
@@ -758,8 +619,8 @@ function clusterHotspots(rawPoints) {
       color:     best.color,
       name:      best.name,
       allSpecies,
-      isFront:   members.some(p => p.frontIntensity > 0.6),
-      pointData: best.pointData
+      isFront:   false,   // no front info in hotspots.json, could be added later
+      pointData: best.data || {}
     });
   }
 
@@ -768,56 +629,31 @@ function clusterHotspots(rawPoints) {
 }
 
 // ============================================================
-//  SEARCH
+//  SEARCH — simple filter by species
 // ============================================================
 
 function searchHotspots(selectedSpecies, useRadiusFilter = true) {
-  if (!oceanData?.points) throw new Error('Ocean data not loaded');
+  if (!allHotspots.length) throw new Error('No hotspots data loaded');
 
-  let pointsInRange = oceanData.points;
+  let points = allHotspots;
+
+  // Filter by radius if needed
   if (useRadiusFilter && userLat) {
-    pointsInRange = oceanData.points.filter(p =>
+    points = points.filter(p =>
       haversineKm(userLat, userLon, p.lat, p.lon) <= SEARCH_RADIUS_KM
     );
   }
 
-  const rawHotspots = [];
+  // Now filter by selected species: keep point if it has at least one matching species
+  // The "species" array inside each point contains objects with { id, name, score, color, vars }
+  const filtered = points.filter(point => {
+    if (!point.species || point.species.length === 0) return false;
+    // Check if any of the selected species IDs is present in point.species
+    return selectedSpecies.some(sp => point.species.some(ps => ps.id === sp.id));
+  });
 
-  for (const point of pointsInRange) {
-    const speciesMatches = [];
-    for (const sp of selectedSpecies) {
-      const { score, matchedVars } = matchSpecies(
-        point,
-        sp.ranges,
-        point.frontIntensity,
-        point.thermocline
-      );
-      if (score >= MIN_SCORE_THRESHOLD) {
-        speciesMatches.push({
-          name:  sp.name,
-          color: sp.color,
-          match: +(score * 100).toFixed(1),
-          vars:  matchedVars
-        });
-      }
-    }
-    if (speciesMatches.length === 0) continue;
-    speciesMatches.sort((a, b) => b.match - a.match);
-    const best = speciesMatches[0];
-    rawHotspots.push({
-      lat:           point.lat,
-      lon:           point.lon,
-      match:         best.match,
-      color:         best.color,
-      name:          best.name,
-      allSpecies:    speciesMatches,
-      isFront:       point.frontIntensity > 0.6,
-      frontIntensity: point.frontIntensity,
-      pointData:     point
-    });
-  }
-
-  return clusterHotspots(rawHotspots);
+  // Cluster the filtered points
+  return clusterHotspots(filtered);
 }
 
 // ============================================================
@@ -943,7 +779,7 @@ map.getContainer().addEventListener('click', e => {
     const nameEl = document.getElementById('popup-name');
     if (hit.allSpecies && hit.allSpecies.length > 1) {
       nameEl.innerHTML = hit.allSpecies
-        .map(s => `<span style="color:${s.color}">● ${s.name} ${s.match.toFixed(0)}%</span>`)
+        .map(s => `<span style="color:${s.color}">● ${s.name} ${s.score.toFixed(0)}%</span>`)
         .join('<br>');
     } else {
       nameEl.style.color = hit.color;
@@ -952,7 +788,7 @@ map.getContainer().addEventListener('click', e => {
 
     const pctEl = document.getElementById('popup-pct');
     pctEl.style.color = hit.color;
-    pctEl.textContent = hit.match.toFixed(0) + '% match' + (hit.isFront ? '  🌊⚡ Front' : '');
+    pctEl.textContent = hit.match.toFixed(0) + '% match';
 
     if (userLat) {
       const km = haversineKm(userLat, userLon, hit.lat, hit.lon);
@@ -966,12 +802,12 @@ map.getContainer().addEventListener('click', e => {
     const pd = hit.pointData || {};
     [
       { key:'temperature',  label:'🌡️ Temp',      unit:'°C',    dec:1 },
-      { key:'chlorophyll',  label:'🟢 Chl',        unit:'mg/m³', dec:2 },
-      { key:'oxygen',       label:'💧 O₂',         unit:'ml/l',  dec:2 },
-      { key:'salinity',     label:'🧂 Salinity',    unit:'ppt',   dec:1 },
-      { key:'transparency', label:'👁️ Secchi',      unit:'m',     dec:0 },
-      { key:'currentSpeed', label:'🌊 Current',     unit:'kn',    dec:2 },
-      { key:'thermocline',  label:'📏 Thermocline', unit:'m',     dec:0 }
+      { key:'chl',          label:'🟢 Chl',        unit:'mg/m³', dec:2 },
+      { key:'o2',           label:'💧 O₂',         unit:'ml/l',  dec:2 },
+      { key:'sal',          label:'🧂 Salinity',    unit:'ppt',   dec:1 },
+      { key:'secchi',       label:'👁️ Secchi',      unit:'m',     dec:0 },
+      { key:'current',      label:'🌊 Current',     unit:'kn',    dec:2 },
+      { key:'thermo',       label:'📏 Thermocline', unit:'m',     dec:0 }
     ].forEach(v => {
       const val = pd[v.key];
       const d   = document.createElement('div');
@@ -1131,22 +967,21 @@ document.getElementById('search-btn').addEventListener('click', async () => {
     document.getElementById('results-text').innerHTML = 'Location not available. Enable GPS.';
     return;
   }
-  if (!oceanData) {
-    document.getElementById('results-text').innerHTML = 'Environmental data not loaded yet.';
+  if (!allHotspots.length) {
+    document.getElementById('results-text').innerHTML = 'Hotspots data not loaded yet.';
     return;
   }
 
   const btn = document.getElementById('search-btn');
   btn.disabled = true;
   btn.textContent = 'Searching...';
-  document.getElementById('results-text').innerHTML = '<div class="spinner"></div> Analyzing data...';
+  document.getElementById('results-text').innerHTML = '<div class="spinner"></div> Filtering hotspots...';
 
   try {
-    const useRadius = (currentDataSource === 'data.json');  // filter only for main coast
-    hotspotResults = searchHotspots(selected, useRadius);
+    // We always filter within 100km for the main coast (no zone switch)
+    hotspotResults = searchHotspots(selected, true);
     document.getElementById('results-text').innerHTML =
-      `<span class="result-count">${hotspotResults.length}</span> hotspots found (${currentZoneName})` +
-      (useRadius ? ' within 100km' : ' — full zone');
+      `<span class="result-count">${hotspotResults.length}</span> hotspots found within 100km`;
     drawHotspots();
     collapseSheet();
   } catch (err) {
@@ -1163,18 +998,30 @@ document.getElementById('search-btn').addEventListener('click', async () => {
 
 async function captureCurrentSpot() {
   if (!userLat || !userLon) { alert('Location not available.'); return; }
-  if (!oceanData)           { alert('Environmental data not loaded yet.'); return; }
+  if (!allHotspots.length) { alert('Hotspots data not loaded yet.'); return; }
 
+  // Find nearest hotspot point (or raw point)
   let minDist = Infinity, nearest = null;
-  for (const p of oceanData.points) {
+  for (const p of allHotspots) {
     const d = haversineKm(userLat, userLon, p.lat, p.lon);
     if (d < minDist) { minDist = d; nearest = p; }
   }
-  if (!nearest) { alert('No nearby data found.'); return; }
+  if (!nearest) { alert('No nearby hotspot found.'); return; }
 
+  // Build ranges from the data object (using same keys as in hotspots.json)
+  const data = nearest.data || {};
   const ranges = {};
   ALL_VARS.forEach(v => {
-    const val = nearest[v.key];
+    let val = data[v.key] ?? data[v.key] ?? null;
+    // Try alternative keys (chl, o2, sal, secchi, current, thermo)
+    if (val == null) {
+      if (v.key === 'chlorophyll') val = data.chl;
+      else if (v.key === 'oxygen') val = data.o2;
+      else if (v.key === 'salinity') val = data.sal;
+      else if (v.key === 'transparency') val = data.secchi;
+      else if (v.key === 'currentSpeed') val = data.current;
+      else if (v.key === 'thermocline') val = data.thermo;
+    }
     if (val == null) {
       ranges[v.key] = [v.min, v.max];
     } else {
@@ -1373,40 +1220,12 @@ document.getElementById('species-acc-header').addEventListener('click', () => {
 });
 
 // ============================================================
-//  DATA SOURCE SWITCH
-// ============================================================
-
-function switchDataSource(file, zoneName) {
-  if (currentDataSource === file) return;
-  currentDataSource = file;
-  currentZoneName = zoneName;
-
-  document.querySelectorAll('.switch-option').forEach(opt => {
-    if (opt.dataset.file === file) opt.classList.add('active');
-    else opt.classList.remove('active');
-  });
-
-  hotspotResults = [];
-  drawHotspots();
-  document.getElementById('nav-count').textContent = '0';
-  loadOceanData(file);
-}
-
-document.querySelectorAll('.switch-option').forEach(opt => {
-  opt.addEventListener('click', () => {
-    const file = opt.dataset.file;
-    const zoneName = opt.innerText;
-    switchDataSource(file, zoneName);
-  });
-});
-
-// ============================================================
 //  INIT
 // ============================================================
 
 renderSpecies();
 initGPS();
-loadOceanData('data.json');  // start with Algerian Coast
+loadHotspotsData();   // load the new hotspots.json
 </script>
 </body>
 </html>
