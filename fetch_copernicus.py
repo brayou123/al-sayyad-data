@@ -20,7 +20,9 @@ DEPTH_SURFACE = 1.0182366371154785
 DEPTH_MAX     = 150.0
 GRID_STEP     = 0.04
 
-yesterday = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
+# استخدام تاريخ قبل يومين لضمان توفر البيانات في جميع المجموعات (NRT و MY)
+target_date = (datetime.utcnow().date() - timedelta(days=2))
+yesterday = target_date.isoformat()
 print(f"Date : {yesterday}")
 
 SPECIES = [
@@ -161,7 +163,8 @@ print("\n=== Downloading ===")
 ds_sst  = download("SST_MED_SST_L4_NRT_OBSERVATIONS_010_004_c_V2",
                    ["analysed_sst"], "sst.nc")
 
-ds_chl  = download("cmems_obs-oc_med_bgc-plankton_my_l4-gapfree-multi-1km_P1D",
+# تم التعديل هنا: استخدام الإصدار NRT بدلاً من MY لضمان أحدث البيانات
+ds_chl  = download("cmems_obs-oc_med_bgc-plankton_nrt_l4-gapfree-multi-1km_P1D",
                    ["CHL"], "chl.nc")
 
 ds_o2   = download("cmems_mod_med_bgc-bio_anfc_4.2km_P1D-m",
