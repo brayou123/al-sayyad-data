@@ -23,9 +23,9 @@ if not USERNAME or not PASSWORD:
 # =====================================================
 # Target point & date
 # =====================================================
-TARGET_LAT  = 35.9043
-TARGET_LON  = -0.1649
-TARGET_DATE = "2026-06-03"
+TARGET_LAT  = 36.5886
+TARGET_LON  = 1.9314
+TARGET_DATE = "2026-07-07"
 
 # Small bounding box around the point (±0.05° ~ 5km)
 MARGIN = 0.05
