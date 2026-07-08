@@ -85,9 +85,8 @@ ds_sst = fetch("SST_MED_SST_L4_NRT_OBSERVATIONS_010_004_c_V2",
 ds_chl = fetch("cmems_obs-oc_med_bgc-plankton_nrt_l4-gapfree-multi-1km_P1D",
                ["CHL"], "pt_chl.nc")
 
-ds_o2  = fetch("cmems_mod_med_bgc_anfc_4.2km_P1D-m",
+ds_o2  = fetch("cmems_mod_med_bgc-bio_anfc_4.2km_P1D-m",
                ["o2"], "pt_o2.nc")
-
 ds_kd  = fetch("cmems_mod_med_bgc-optics_anfc_4.2km_P1D-m",
                ["kd490"], "pt_kd.nc")
 
