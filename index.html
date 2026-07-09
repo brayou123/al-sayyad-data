@@ -8,6 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=IBM+Plex+Mono:wght@400;500&family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
+  /* نفس الـ style السابق، غيرت فقط بعض الألوان والخلفيات */
   :root {
     --bg: #060d14;
     --surface: #0b1623;
@@ -284,6 +285,28 @@
   .btn-cancel { background: var(--surface2); color: var(--text-dim); }
   .btn-save   { background: var(--accent); color: #000; }
   .modal-btns button:hover { opacity: 0.82; }
+
+  /* Toggle switch style */
+  .toggle-wrap {
+    display: flex;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    overflow: hidden;
+    font-size: 9px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .toggle-option {
+    padding: 4px 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: var(--text-dim);
+  }
+  .toggle-option.active {
+    background: var(--accent);
+    color: #000;
+    font-weight: 700;
+  }
 </style>
 </head>
 <body>
@@ -304,6 +327,10 @@
   <div id="sheet-header">
     <div id="sheet-title">
       🎣 Hotspots
+      <div class="toggle-wrap" id="toggle-wrap">
+        <div class="toggle-option active" data-mode="literature">📘 Literature</div>
+        <div class="toggle-option" data-mode="real">🎯 Real</div>
+      </div>
     </div>
     <div id="gps-badge">
       <div class="gps-dot" id="gps-dot"></div>
@@ -375,42 +402,19 @@ const ALL_VARS = [
 
 const SLIDER_VARS = ALL_VARS.filter(v => v.key !== 'thermocline');
 
-const PREDEFINED = [
+// الأدبيات (كما في السكربت)
+const LIT_SPECIES = [
   {
     id: 'sardine', name: 'Sardine', sci: 'Sardina pilchardus', color: '#00aaff',
-    ranges: {
-      temperature:  [13, 20],
-      chlorophyll:  [0.5, 4.0],
-      oxygen:       [5.5, 8.5],
-      salinity:     [36, 38.5],
-      transparency: [5, 25],
-      currentSpeed: [0, 1.0],
-      thermocline:  [20, 40]
-    }
+    ranges: { temperature:[13,20], chlorophyll:[0.5,4.0], oxygen:[5.5,8.5], salinity:[36,38.5], transparency:[5,25], currentSpeed:[0,1.0], thermocline:[20,40] }
   },
   {
     id: 'anchovy', name: 'Anchovy', sci: 'Engraulis encrasicolus', color: '#ff4455',
-    ranges: {
-      temperature:  [14, 23],
-      chlorophyll:  [1.0, 5.0],
-      oxygen:       [5.0, 8.0],
-      salinity:     [36, 38.5],
-      transparency: [5, 20],
-      currentSpeed: [0, 1.5],
-      thermocline:  [15, 35]
-    }
+    ranges: { temperature:[14,23], chlorophyll:[1.0,5.0], oxygen:[5.0,8.0], salinity:[36,38.5], transparency:[5,20], currentSpeed:[0,1.5], thermocline:[15,35] }
   },
   {
     id: 'lacha', name: 'Lacha', sci: 'Sardinella aurita', color: '#22cc77',
-    ranges: {
-      temperature:  [20, 27],
-      chlorophyll:  [0.3, 2.5],
-      oxygen:       [4.5, 8.0],
-      salinity:     [36, 39],
-      transparency: [3, 18],
-      currentSpeed: [0, 2.0],
-      thermocline:  [25, 45]
-    }
+    ranges: { temperature:[20,27], chlorophyll:[0.3,2.5], oxygen:[4.5,8.0], salinity:[36,39], transparency:[3,18], currentSpeed:[0,2.0], thermocline:[25,45] }
   }
 ];
 
@@ -424,11 +428,13 @@ let userLat = null, userLon = null;
 let map, userMarker, radiusCircle;
 let hotspotResults = [];
 let animFrame;
-let hotspotsData = null;          // will hold the full JSON from hotspots.json
-let allHotspots = [];            // array of points from the file
+let fullData = null;           // holds the full hotspots.json
+let currentMode = 'literature'; // 'literature' or 'real'
+let allPoints = [];            // points from the current mode
 
+// Species from localStorage (for filtering)
 let species = JSON.parse(localStorage.getItem('hs_species') || 'null')
-  || PREDEFINED.map(s => ({ ...s, ranges: { ...s.ranges }, selected: false, expanded: false }));
+  || LIT_SPECIES.map(s => ({ ...s, ranges: { ...s.ranges }, selected: false, expanded: false }));
 
 let modalColor = COLOR_PALETTE[0];
 let modalRanges = {};
@@ -469,23 +475,63 @@ async function loadHotspotsData() {
     const response = await fetch('hotspots.json');
     if (!response.ok) throw new Error(`HTTP ${response.status} — file not found`);
     const json = await response.json();
-
-    // The file contains: { timestamp, count, hotspots: [ { lat, lon, score, color, name, depth, species, data }, ... ] }
-    hotspotsData = json;
-    allHotspots = json.hotspots || [];
-    console.log(`Loaded ${allHotspots.length} hotspots — ${json.timestamp}`);
-
+    fullData = json;
+    // Set initial mode
+    setMode('literature');
     document.getElementById('results-text').innerHTML =
-      `✅ Loaded ${allHotspots.length} pre‑computed hotspots · ${json.timestamp}`;
+      `✅ Loaded ${fullData.literature?.length || 0} lit, ${fullData.real?.length || 0} real · ${fullData.timestamp}`;
     enableSearchIfReady();
   } catch (err) {
     console.error('Failed to load hotspots.json:', err);
     document.getElementById('results-text').innerHTML = '❌ Failed to load hotspots.json. Check that the file exists.';
-    hotspotsData = null;
-    allHotspots = [];
+    fullData = null;
+    allPoints = [];
     enableSearchIfReady();
   }
 }
+
+// ============================================================
+//  MODE TOGGLE
+// ============================================================
+
+function setMode(mode) {
+  currentMode = mode;
+  // Update toggle buttons
+  document.querySelectorAll('.toggle-option').forEach(el => {
+    el.classList.toggle('active', el.dataset.mode === mode);
+  });
+  // Set points
+  if (fullData) {
+    allPoints = fullData[mode] || [];
+    document.getElementById('nav-count').textContent = allPoints.length;
+  } else {
+    allPoints = [];
+  }
+  // Clear results and redraw
+  hotspotResults = [];
+  drawHotspots();
+  // Update search button state
+  enableSearchIfReady();
+}
+
+document.querySelectorAll('.toggle-option').forEach(el => {
+  el.addEventListener('click', () => {
+    const mode = el.dataset.mode;
+    if (mode !== currentMode) {
+      setMode(mode);
+      // Also we need to re-run search if species selected and search was done
+      // We'll just re-run search automatically if there are selected species
+      const selected = species.filter(s => s.selected);
+      if (selected.length > 0 && userLat) {
+        document.getElementById('search-btn').click();
+      } else {
+        // Just clear results
+        hotspotResults = [];
+        drawHotspots();
+      }
+    }
+  });
+});
 
 // ============================================================
 //  GPS
@@ -504,7 +550,7 @@ function updateGPSDot(active) {
 }
 
 function enableSearchIfReady() {
-  if (userLat && allHotspots.length) {
+  if (userLat && allPoints.length) {
     document.getElementById('search-btn').disabled = false;
   } else if (!userLat) {
     document.getElementById('search-btn').disabled = true;
@@ -514,7 +560,7 @@ function enableSearchIfReady() {
       document.getElementById('results-text').innerHTML = '⚠️ Could not get location. Try reloading.';
     else
       document.getElementById('results-text').innerHTML = '📍 Waiting for location...';
-  } else if (!allHotspots.length) {
+  } else if (!allPoints.length) {
     document.getElementById('search-btn').disabled = true;
     document.getElementById('results-text').innerHTML = '<div class="spinner"></div> Loading hotspots data...';
   }
@@ -567,7 +613,7 @@ function initGPS() {
 }
 
 // ============================================================
-//  CLUSTERING (identical to before, but now works on the point data)
+//  CLUSTERING
 // ============================================================
 
 function clusterHotspots(rawPoints) {
@@ -592,14 +638,13 @@ function clusterHotspots(rawPoints) {
     const avgLat = members.reduce((s, p) => s + p.lat, 0) / members.length;
     const avgLon = members.reduce((s, p) => s + p.lon, 0) / members.length;
     const avgMatch = members.reduce((s, p) => s + p.score, 0) / members.length;
-    // best is the one with highest score
     const best = members.reduce((a, b) => a.score > b.score ? a : b);
 
     const radiusKm = members.length === 1
       ? 0.5
       : Math.max(...members.map(p => haversineKm(avgLat, avgLon, p.lat, p.lon)));
 
-    // Combine species lists (from each point's "species" array)
+    // Combine species lists
     const speciesMap = {};
     members.forEach(p => {
       (p.species || []).forEach(sp => {
@@ -619,7 +664,7 @@ function clusterHotspots(rawPoints) {
       color:     best.color,
       name:      best.name,
       allSpecies,
-      isFront:   false,   // no front info in hotspots.json, could be added later
+      isFront:   false,
       pointData: best.data || {}
     });
   }
@@ -629,30 +674,27 @@ function clusterHotspots(rawPoints) {
 }
 
 // ============================================================
-//  SEARCH — simple filter by species
+//  SEARCH — filter by species and radius
 // ============================================================
 
-function searchHotspots(selectedSpecies, useRadiusFilter = true) {
-  if (!allHotspots.length) throw new Error('No hotspots data loaded');
+function searchHotspots(selectedSpecies) {
+  if (!allPoints.length) throw new Error('No hotspots data loaded');
 
-  let points = allHotspots;
+  let points = allPoints;
 
-  // Filter by radius if needed
-  if (useRadiusFilter && userLat) {
+  // Filter by radius if GPS available
+  if (userLat) {
     points = points.filter(p =>
       haversineKm(userLat, userLon, p.lat, p.lon) <= SEARCH_RADIUS_KM
     );
   }
 
-  // Now filter by selected species: keep point if it has at least one matching species
-  // The "species" array inside each point contains objects with { id, name, score, color, vars }
+  // Filter by selected species: keep point if it has at least one matching species id
   const filtered = points.filter(point => {
     if (!point.species || point.species.length === 0) return false;
-    // Check if any of the selected species IDs is present in point.species
     return selectedSpecies.some(sp => point.species.some(ps => ps.id === sp.id));
   });
 
-  // Cluster the filtered points
   return clusterHotspots(filtered);
 }
 
@@ -749,9 +791,23 @@ function drawHotspots() {
 }
 
 // ============================================================
-//  POPUP
+//  POPUP — with arrow for current (only one current available)
 // ============================================================
 
+let activePopupPoint = null;
+let arrowLayer = null;
+
+// Function to draw a single arrow on canvas for the active popup
+function drawArrowFromPoint(point, data, color, label) {
+  if (!point) return;
+  const speed = data.current;
+  const dir = data.currentDir; // we don't have dir in JSON yet, so we use a placeholder
+  // Since we don't have direction in the current data, we skip drawing arrow for now.
+  // In the future, we can add direction to Python and pass it.
+  // For now, we just show a simple label in popup.
+}
+
+// Popup click handler
 map.getContainer().addEventListener('click', e => {
   const mx = e.clientX, my = e.clientY;
   const popup = document.getElementById('hotspot-popup');
@@ -768,6 +824,7 @@ map.getContainer().addEventListener('click', e => {
   });
 
   if (hit) {
+    // Show popup
     popup.style.display = 'block';
     let left = mx + 16, top = my - 20;
     if (left + 250 > window.innerWidth  - 10) left = mx - 266;
@@ -800,15 +857,18 @@ map.getContainer().addEventListener('click', e => {
     const varsEl = document.getElementById('popup-vars');
     varsEl.innerHTML = '';
     const pd = hit.pointData || {};
-    [
-      { key:'temperature',  label:'🌡️ Temp',      unit:'°C',    dec:1 },
-      { key:'chl',          label:'🟢 Chl',        unit:'mg/m³', dec:2 },
-      { key:'o2',           label:'💧 O₂',         unit:'ml/l',  dec:2 },
-      { key:'sal',          label:'🧂 Salinity',    unit:'ppt',   dec:1 },
-      { key:'secchi',       label:'👁️ Secchi',      unit:'m',     dec:0 },
-      { key:'current',      label:'🌊 Current',     unit:'kn',    dec:2 },
-      { key:'thermo',       label:'📏 Thermocline', unit:'m',     dec:0 }
-    ].forEach(v => {
+    // We show all available vars
+    const varList = [
+      { key:'temp',  label:'🌡️ Temp',      unit:'°C',    dec:1 },
+      { key:'chl',   label:'🟢 Chl',        unit:'mg/m³', dec:2 },
+      { key:'o2',    label:'💧 O₂',         unit:'ml/l',  dec:2 },
+      { key:'sal',   label:'🧂 Salinity',    unit:'ppt',   dec:1 },
+      { key:'secchi',label:'👁️ Secchi',      unit:'m',     dec:0 },
+      { key:'current',label:'🌊 Current',     unit:'kn',    dec:2 },
+      { key:'thermo', label:'📏 Thermocline', unit:'m',     dec:0 },
+      { key:'bathy',  label:'📐 Depth',       unit:'m',     dec:0 }
+    ];
+    varList.forEach(v => {
       const val = pd[v.key];
       const d   = document.createElement('div');
       d.className = 'popup-var-item';
@@ -818,13 +878,21 @@ map.getContainer().addEventListener('click', e => {
       if (val == null) d.style.opacity = '0.4';
       varsEl.appendChild(d);
     });
+
+    // Store active point for arrow drawing (if direction existed)
+    activePopupPoint = hit;
+    // Draw arrow if we had direction data (we don't, so skip)
+    // drawArrowFromPoint(hit, pd, hit.color, 'Current');
   } else {
     popup.style.display = 'none';
+    activePopupPoint = null;
+    // Redraw canvas to remove arrow
+    drawHotspots();
   }
 });
 
 // ============================================================
-//  SPECIES UI
+//  SPECIES UI (same as before, but sliders are read-only)
 // ============================================================
 
 function isPredefined(sp) {
@@ -915,37 +983,21 @@ function renderSpecies() {
 
 function buildSliders(container, sp, idx) {
   container.innerHTML = '';
+  // Get ranges from the species object (the ones used in Python)
+  // For literature, ranges are fixed; for real, we could show tolerances if available
   SLIDER_VARS.forEach(v => {
-    const [mn, mx] = sp.ranges[v.key] || [v.min, v.max];
+    const range = sp.ranges[v.key];
+    const lo = range ? range[0] : v.min;
+    const hi = range ? range[1] : v.max;
     const row = document.createElement('div');
     row.className = 'slider-row';
     row.innerHTML = `
-      <label>${v.label} <span id="lbl-${idx}-${v.key}">${mn}–${mx} ${v.unit}</span></label>
+      <label>${v.label} <span>${lo}–${hi} ${v.unit}</span></label>
       <div class="range-wrap">
-        <div class="range-track"><div class="range-fill" id="fill-${idx}-${v.key}"></div></div>
-        <input type="range" id="rmin-${idx}-${v.key}" min="${v.min}" max="${v.max}" step="${v.step}" value="${mn}" />
-        <input type="range" id="rmax-${idx}-${v.key}" min="${v.min}" max="${v.max}" step="${v.step}" value="${mx}" />
+        <div class="range-track"><div class="range-fill" style="left:${((lo-v.min)/(v.max-v.min))*100}%;width:${((hi-lo)/(v.max-v.min))*100}%;"></div></div>
+        <!-- No input sliders, just display -->
       </div>`;
     container.appendChild(row);
-
-    const rMin = container.querySelector(`#rmin-${idx}-${v.key}`);
-    const rMax = container.querySelector(`#rmax-${idx}-${v.key}`);
-    const lbl  = container.querySelector(`#lbl-${idx}-${v.key}`);
-    const fill = container.querySelector(`#fill-${idx}-${v.key}`);
-
-    function upd() {
-      let lo = parseFloat(rMin.value), hi = parseFloat(rMax.value);
-      if (lo > hi) [lo, hi] = [hi, lo];
-      const r = v.max - v.min;
-      fill.style.left  = ((lo - v.min) / r * 100) + '%';
-      fill.style.width = ((hi - lo)    / r * 100) + '%';
-      lbl.textContent  = `${lo}–${hi} ${v.unit}`;
-      sp.ranges[v.key] = [lo, hi];
-      saveSpecies();
-    }
-    rMin.addEventListener('input', upd);
-    rMax.addEventListener('input', upd);
-    upd();
   });
 }
 
@@ -967,7 +1019,7 @@ document.getElementById('search-btn').addEventListener('click', async () => {
     document.getElementById('results-text').innerHTML = 'Location not available. Enable GPS.';
     return;
   }
-  if (!allHotspots.length) {
+  if (!allPoints.length) {
     document.getElementById('results-text').innerHTML = 'Hotspots data not loaded yet.';
     return;
   }
@@ -978,10 +1030,9 @@ document.getElementById('search-btn').addEventListener('click', async () => {
   document.getElementById('results-text').innerHTML = '<div class="spinner"></div> Filtering hotspots...';
 
   try {
-    // We always filter within 100km for the main coast (no zone switch)
-    hotspotResults = searchHotspots(selected, true);
+    hotspotResults = searchHotspots(selected);
     document.getElementById('results-text').innerHTML =
-      `<span class="result-count">${hotspotResults.length}</span> hotspots found within 100km`;
+      `<span class="result-count">${hotspotResults.length}</span> hotspots found (${currentMode})`;
     drawHotspots();
     collapseSheet();
   } catch (err) {
@@ -993,27 +1044,24 @@ document.getElementById('search-btn').addEventListener('click', async () => {
 });
 
 // ============================================================
-//  CAPTURE CURRENT SPOT
+//  CAPTURE CURRENT SPOT (adapt for current mode)
 // ============================================================
 
 async function captureCurrentSpot() {
   if (!userLat || !userLon) { alert('Location not available.'); return; }
-  if (!allHotspots.length) { alert('Hotspots data not loaded yet.'); return; }
+  if (!allPoints.length) { alert('Hotspots data not loaded yet.'); return; }
 
-  // Find nearest hotspot point (or raw point)
   let minDist = Infinity, nearest = null;
-  for (const p of allHotspots) {
+  for (const p of allPoints) {
     const d = haversineKm(userLat, userLon, p.lat, p.lon);
     if (d < minDist) { minDist = d; nearest = p; }
   }
   if (!nearest) { alert('No nearby hotspot found.'); return; }
 
-  // Build ranges from the data object (using same keys as in hotspots.json)
   const data = nearest.data || {};
   const ranges = {};
   ALL_VARS.forEach(v => {
     let val = data[v.key] ?? data[v.key] ?? null;
-    // Try alternative keys (chl, o2, sal, secchi, current, thermo)
     if (val == null) {
       if (v.key === 'chlorophyll') val = data.chl;
       else if (v.key === 'oxygen') val = data.o2;
@@ -1112,7 +1160,7 @@ document.getElementById('expand-btn').addEventListener('click', () => {
 })();
 
 // ============================================================
-//  MODAL
+//  MODAL (unchanged)
 // ============================================================
 
 function buildColorRow() {
@@ -1225,7 +1273,7 @@ document.getElementById('species-acc-header').addEventListener('click', () => {
 
 renderSpecies();
 initGPS();
-loadHotspotsData();   // load the new hotspots.json
+loadHotspotsData();
 </script>
 </body>
 </html>
