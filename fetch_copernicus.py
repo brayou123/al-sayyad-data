@@ -7,6 +7,9 @@ from datetime import datetime, timedelta
 from scipy.interpolate import RegularGridInterpolator
 from copernicusmarine import subset
 
+# =====================================================
+# Credentials & Region
+# =====================================================
 USERNAME = os.environ.get("COPERNICUSMARINE_USERNAME")
 PASSWORD = os.environ.get("COPERNICUSMARINE_PASSWORD")
 if not USERNAME or not PASSWORD:
@@ -15,16 +18,32 @@ if not USERNAME or not PASSWORD:
 LAT_MIN = 36.5
 LAT_MAX = 37.0
 LON_MIN = -1.7
-LON_MAX =  8.6
+LON_MAX = 8.6
 DEPTH_SURFACE = 1.0182366371154785
-DEPTH_MAX     = 150.0
-GRID_STEP     = 0.04
+DEPTH_MAX = 150.0
+GRID_STEP = 0.04
 
-# استخدام تاريخ قبل يومين لضمان توفر البيانات في جميع المجموعات (NRT و MY)
 target_date = (datetime.utcnow().date() - timedelta(days=2))
 yesterday = target_date.isoformat()
 print(f"Date : {yesterday}")
 
+# =====================================================
+# REFERENCE VALUES (Fixed from successful catch)
+# =====================================================
+REF_VALUES = {
+    "temperature": 20.89,
+    "oxygen": 5.29,
+    "salinity": 36.72,
+    "transparency": 43.3,
+    "currentSpeed": 0.11,
+    "thermocline": 14.8,
+}
+REF_LAT = 36.5886
+REF_LON = 1.9314
+
+# =====================================================
+# SPECIES DEFINITIONS (Literature model)
+# =====================================================
 SPECIES = [
     {
         "id": "sardine", "name": "Sardine",
@@ -102,6 +121,9 @@ SPECIES = [
 
 HSI_THRESHOLD = 0.60
 
+# =====================================================
+# HELPERS (Download, Regrid, Extract)
+# =====================================================
 def get_path(result):
     if isinstance(result, str): return result
     if hasattr(result, 'filenames') and result.filenames: return result.filenames[0]
@@ -158,12 +180,88 @@ def get_profile_val(profile_3d, depth_arr, src_lat, src_lon, target_depth, i, j)
     val = profile_3d[idx_d, si, sj]
     return float(val) if not np.isnan(val) else None
 
+def clamp(value, min_val, max_val):
+    return max(min_val, min(max_val, value))
+
+# =====================================================
+# HSI FUNCTIONS (Literature)
+# =====================================================
+def compute_si(val, lo, hi):
+    if val is None or np.isnan(float(val)): return None
+    val = float(val)
+    rang  = hi - lo or 1.0
+    decay = rang * 0.30
+    if val < lo: return max(0.0, 1.0 - (lo - val) / decay)
+    if val > hi: return max(0.0, 1.0 - (val - hi) / decay)
+    center = (lo + hi) / 2.0
+    return 0.70 + 0.30 * (1.0 - abs(val - center) / (rang / 2.0))
+
+def compute_literature_hsi(point, sp, bathy):
+    ranges   = sp["ranges"]
+    weights  = sp["weights"]
+    critical = sp["critical"]
+    if bathy is not None and not np.isnan(float(bathy)):
+        if float(bathy) < sp["depth_min"] or float(bathy) > sp["depth_max"]:
+            return 0.0, []
+    for key in critical:
+        v = point.get(key)
+        if v is None or np.isnan(float(v)): return 0.0, []
+    si_vals = {}
+    for key, (lo, hi) in ranges.items():
+        si = compute_si(point.get(key), lo, hi)
+        si_vals[key] = si if si is not None else 0.35
+    total_w = sum(weights.values())
+    hsi = sum(weights[k] * si_vals[k] for k in weights) / total_w
+    labels = {
+        "temperature":"Temp","chlorophyll":"Chl","oxygen":"O₂",
+        "salinity":"Sal","transparency":"Secchi",
+        "currentSpeed":"Current","thermocline":"Thermocline",
+    }
+    matched = [labels[k] for k, v in si_vals.items() if v >= 0.80]
+    return round(float(hsi), 4), matched
+
+# =====================================================
+# HSI FUNCTIONS (Real / Reference)
+# =====================================================
+def compute_real_hsi(point, ref_values, tolerances, weights):
+    total_weight = 0
+    weighted_similarity = 0
+    matched_vars = []
+    
+    var_keys = ['temperature', 'oxygen', 'salinity', 'transparency', 'currentSpeed', 'thermocline']
+    
+    for key in var_keys:
+        val = point.get(key)
+        ref = ref_values.get(key)
+        tol = tolerances.get(key)
+        w = weights.get(key, 0.1)
+        
+        if val is None or np.isnan(val) or ref is None or tol is None or tol <= 0:
+            continue
+        
+        diff = abs(val - ref) / tol
+        similarity = max(0.0, 1.0 - diff)
+        
+        weighted_similarity += similarity * w
+        total_weight += w
+        
+        if similarity >= 0.80:
+            matched_vars.append(key.capitalize())
+    
+    if total_weight == 0:
+        return 0.0, []
+    
+    hsi = weighted_similarity / total_weight
+    return round(float(hsi), 4), matched_vars
+
+# =====================================================
+# DOWNLOAD DATA
+# =====================================================
 print("\n=== Downloading ===")
 
 ds_sst  = download("SST_MED_SST_L4_NRT_OBSERVATIONS_010_004_c_V2",
                    ["analysed_sst"], "sst.nc")
 
-# تم التعديل هنا: استخدام الإصدار NRT بدلاً من MY لضمان أحدث البيانات
 ds_chl  = download("cmems_obs-oc_med_bgc-plankton_nrt_l4-gapfree-multi-1km_P1D",
                    ["CHL"], "chl.nc")
 
@@ -186,6 +284,9 @@ ds_tem  = download("cmems_mod_med_phy-tem_anfc_4.2km_P1D-m",
                    ["thetao"], "tem.nc",
                    depth_min=DEPTH_SURFACE, depth_max=DEPTH_MAX)
 
+# =====================================================
+# REGRID TO TARGET GRID
+# =====================================================
 tgt_lat = np.arange(LAT_MIN, LAT_MAX + GRID_STEP, GRID_STEP)
 tgt_lon = np.arange(LON_MIN, LON_MAX + GRID_STEP, GRID_STEP)
 NL, NO = len(tgt_lat), len(tgt_lon)
@@ -233,6 +334,7 @@ src_lon_tem = ds_tem[lon_n].values
 dep_tem     = ds_tem['depth'].values
 prof_tem    = extract_profile(ds_tem, "thetao")
 
+# --- Thermocline & Bathymetry ---
 grad_tem    = np.abs(np.diff(prof_tem, axis=0))
 thermo_idx  = np.argmax(grad_tem, axis=0)
 d_up        = dep_tem[:-1]
@@ -251,120 +353,204 @@ bathy_2d   = regrid_2d(bathy_raw, src_lat_tem, src_lon_tem, tgt_lat, tgt_lon)
 
 print("Processing done.")
 
-def compute_si(val, lo, hi):
-    if val is None or np.isnan(float(val)): return None
-    val = float(val)
-    rang  = hi - lo or 1.0
-    decay = rang * 0.30
-    if val < lo: return max(0.0, 1.0 - (lo - val) / decay)
-    if val > hi: return max(0.0, 1.0 - (val - hi) / decay)
-    center = (lo + hi) / 2.0
-    return 0.70 + 0.30 * (1.0 - abs(val - center) / (rang / 2.0))
+# =====================================================
+# COMPUTE TOLERANCES AUTOMATICALLY FROM TODAY'S DATA
+# =====================================================
+print("\n=== Computing Adaptive Tolerances ===")
 
-def compute_hsi(point, sp, bathy):
-    ranges   = sp["ranges"]
-    weights  = sp["weights"]
-    critical = sp["critical"]
-    if bathy is not None and not np.isnan(float(bathy)):
-        if float(bathy) < sp["depth_min"] or float(bathy) > sp["depth_max"]:
-            return 0.0, []
-    for key in critical:
-        v = point.get(key)
-        if v is None or np.isnan(float(v)): return 0.0, []
-    si_vals = {}
-    for key, (lo, hi) in ranges.items():
-        si = compute_si(point.get(key), lo, hi)
-        si_vals[key] = si if si is not None else 0.35
-    total_w = sum(weights.values())
-    hsi = sum(weights[k] * si_vals[k] for k in weights) / total_w
-    labels = {
-        "temperature":"Temp","chlorophyll":"Chl","oxygen":"O₂",
-        "salinity":"Sal","transparency":"Secchi",
-        "currentSpeed":"Current","thermocline":"Thermocline",
-    }
-    matched = [labels[k] for k, v in si_vals.items() if v >= 0.80]
-    return round(float(hsi), 4), matched
+all_temps, all_o2, all_sal, all_sec, all_cur, all_thermo = [], [], [], [], [], []
 
-print("\n=== Computing HSI ===")
-hotspots  = []
+for i in range(NL):
+    for j in range(NO):
+        if np.isnan(sst_2d[i, j]): continue
+        thermo = thermo_2d[i, j]
+        ref_depth = float(thermo) if not np.isnan(thermo) else 30.0
+        ref_depth = min(ref_depth, DEPTH_MAX)
+        
+        t = get_profile_val(prof_tem, dep_tem, src_lat_tem, src_lon_tem, ref_depth, i, j)
+        if t is not None and not np.isnan(t): all_temps.append(t)
+        
+        o = get_profile_val(prof_o2, dep_o2, src_lat_o2, src_lon_o2, ref_depth, i, j)
+        if o is not None and not np.isnan(o): all_o2.append(o / 44.661)
+        
+        s = get_profile_val(prof_sal, dep_sal, src_lat_sal, src_lon_sal, ref_depth, i, j)
+        if s is not None and not np.isnan(s): all_sal.append(s)
+        
+        sec = float(sec_2d[i, j]) if not np.isnan(sec_2d[i, j]) else None
+        if sec is not None: all_sec.append(sec)
+        
+        u = get_profile_val(prof_uo, dep_cur, src_lat_cur, src_lon_cur, ref_depth, i, j)
+        v = get_profile_val(prof_vo, dep_cur, src_lat_cur, src_lon_cur, ref_depth, i, j)
+        if u is not None and v is not None and not np.isnan(u) and not np.isnan(v):
+            all_cur.append(float(np.sqrt(u**2 + v**2)) * 1.944)
+        
+        if not np.isnan(thermo): all_thermo.append(float(thermo))
+
+TOL_BOUNDS = {
+    "temperature": (0.5, 3.0),
+    "oxygen": (0.2, 1.5),
+    "salinity": (0.2, 1.5),
+    "transparency": (2.0, 20.0),
+    "currentSpeed": (0.05, 1.0),
+    "thermocline": (2.0, 15.0),
+}
+
+TOLERANCES = {}
+TOLERANCES["temperature"] = clamp(np.nanstd(all_temps) * 0.4, *TOL_BOUNDS["temperature"]) if all_temps else 1.5
+TOLERANCES["oxygen"] = clamp(np.nanstd(all_o2) * 0.4, *TOL_BOUNDS["oxygen"]) if all_o2 else 0.5
+TOLERANCES["salinity"] = clamp(np.nanstd(all_sal) * 0.4, *TOL_BOUNDS["salinity"]) if all_sal else 0.5
+TOLERANCES["transparency"] = clamp(np.nanstd(all_sec) * 0.4, *TOL_BOUNDS["transparency"]) if all_sec else 5.0
+TOLERANCES["currentSpeed"] = clamp(np.nanstd(all_cur) * 0.4, *TOL_BOUNDS["currentSpeed"]) if all_cur else 0.15
+TOLERANCES["thermocline"] = clamp(np.nanstd(all_thermo) * 0.4, *TOL_BOUNDS["thermocline"]) if all_thermo else 4.0
+
+print("Computed tolerances (auto):")
+for k, v in TOLERANCES.items():
+    print(f"  {k}: ±{v:.2f}")
+
+# =====================================================
+# COMPUTE HOTSPOTS (Literature & Real)
+# =====================================================
+print("\n=== Computing Hotspots ===")
+
+lit_hotspots = []
+real_hotspots = []
 total_pts = 0
-passed_pts = 0
+
+REAL_WEIGHTS = {
+    "temperature": 0.30,
+    "oxygen": 0.20,
+    "salinity": 0.15,
+    "transparency": 0.15,
+    "currentSpeed": 0.10,
+    "thermocline": 0.10,
+}
 
 for i in range(NL):
     for j in range(NO):
         t_surf = sst_2d[i, j]
         if np.isnan(t_surf): continue
         total_pts += 1
-        thermo    = thermo_2d[i, j]
-        bathy     = bathy_2d[i, j]
+        
+        thermo = thermo_2d[i, j]
+        bathy = bathy_2d[i, j]
         ref_depth = float(thermo) if not np.isnan(thermo) else 30.0
         ref_depth = min(ref_depth, DEPTH_MAX)
-        o2_val  = get_profile_val(prof_o2,  dep_o2,  src_lat_o2,  src_lon_o2,  ref_depth, i, j)
-        uo_val  = get_profile_val(prof_uo,  dep_cur, src_lat_cur, src_lon_cur, ref_depth, i, j)
-        vo_val  = get_profile_val(prof_vo,  dep_cur, src_lat_cur, src_lon_cur, ref_depth, i, j)
+        
+        # Extract values at depth
+        o2_val = get_profile_val(prof_o2, dep_o2, src_lat_o2, src_lon_o2, ref_depth, i, j)
+        uo_val = get_profile_val(prof_uo, dep_cur, src_lat_cur, src_lon_cur, ref_depth, i, j)
+        vo_val = get_profile_val(prof_vo, dep_cur, src_lat_cur, src_lon_cur, ref_depth, i, j)
         sal_val = get_profile_val(prof_sal, dep_sal, src_lat_sal, src_lon_sal, ref_depth, i, j)
         tem_val = get_profile_val(prof_tem, dep_tem, src_lat_tem, src_lon_tem, ref_depth, i, j)
+        
         if o2_val is not None: o2_val = o2_val / 44.661
         cur_val = None
         if uo_val is not None and vo_val is not None:
             cur_val = float(np.sqrt(uo_val**2 + vo_val**2)) * 1.944
+        
         point = {
-            "temperature":  float(tem_val) if tem_val is not None else float(t_surf),
-            "chlorophyll":  float(chl_2d[i,j]) if not np.isnan(chl_2d[i,j]) else None,
-            "oxygen":       o2_val,
-            "salinity":     sal_val,
+            "temperature": float(tem_val) if tem_val is not None else float(t_surf),
+            "chlorophyll": float(chl_2d[i,j]) if not np.isnan(chl_2d[i,j]) else None,
+            "oxygen": o2_val,
+            "salinity": sal_val,
             "transparency": float(sec_2d[i,j]) if not np.isnan(sec_2d[i,j]) else None,
             "currentSpeed": cur_val,
-            "thermocline":  float(thermo)       if not np.isnan(thermo)       else None,
+            "thermocline": float(thermo) if not np.isnan(thermo) else None,
         }
         b = float(bathy) if not np.isnan(bathy) else None
-        best_score = 0.0
-        best_sp    = None
-        all_sp     = []
+        lat = round(float(tgt_lat[i]), 5)
+        lon = round(float(tgt_lon[j]), 5)
+
+        # --- MODEL 1: LITERATURE ---
+        best_score_lit = 0.0
+        best_sp_lit = None
+        all_sp_lit = []
         for sp in SPECIES:
-            score, matched = compute_hsi(point, sp, b)
+            score, matched = compute_literature_hsi(point, sp, b)
             if score >= HSI_THRESHOLD:
-                all_sp.append({
-                    "id":    sp["id"],
-                    "name":  sp["name"],
+                all_sp_lit.append({
+                    "id": sp["id"],
+                    "name": sp["name"],
                     "color": sp["color"],
                     "score": round(score * 100, 1),
-                    "vars":  matched,
+                    "vars": matched,
                 })
-                if score > best_score:
-                    best_score = score
-                    best_sp    = sp
-        if not all_sp: continue
-        passed_pts += 1
-        all_sp.sort(key=lambda x: x["score"], reverse=True)
-        hotspots.append({
-            "lat":     round(float(tgt_lat[i]), 5),
-            "lon":     round(float(tgt_lon[j]), 5),
-            "score":   round(best_score * 100, 1),
-            "color":   best_sp["color"],
-            "name":    best_sp["name"],
-            "depth":   round(ref_depth, 1),
-            "species": all_sp,
-            "data": {
-                "temp":    round(point["temperature"], 2),
-                "chl":     round(point["chlorophyll"], 3)  if point["chlorophyll"]  else None,
-                "o2":      round(point["oxygen"], 2)       if point["oxygen"]       else None,
-                "sal":     round(point["salinity"], 2)     if point["salinity"]     else None,
-                "secchi":  round(point["transparency"], 1) if point["transparency"] else None,
-                "current": round(point["currentSpeed"], 2) if point["currentSpeed"] else None,
-                "thermo":  round(point["thermocline"], 1)  if point["thermocline"]  else None,
-                "bathy":   round(b, 0)                     if b                     else None,
-            }
-        })
+                if score > best_score_lit:
+                    best_score_lit = score
+                    best_sp_lit = sp
+        if all_sp_lit:
+            all_sp_lit.sort(key=lambda x: x["score"], reverse=True)
+            lit_hotspots.append({
+                "lat": lat, "lon": lon,
+                "score": round(best_score_lit * 100, 1),
+                "color": best_sp_lit["color"],
+                "name": best_sp_lit["name"],
+                "depth": round(ref_depth, 1),
+                "species": all_sp_lit,
+                "data": {
+                    "temp": round(point["temperature"], 2),
+                    "chl": round(point["chlorophyll"], 3) if point["chlorophyll"] else None,
+                    "o2": round(point["oxygen"], 2) if point["oxygen"] else None,
+                    "sal": round(point["salinity"], 2) if point["salinity"] else None,
+                    "secchi": round(point["transparency"], 1) if point["transparency"] else None,
+                    "current": round(point["currentSpeed"], 2) if point["currentSpeed"] else None,
+                    "thermo": round(point["thermocline"], 1) if point["thermocline"] else None,
+                    "bathy": round(b, 0) if b else None,
+                }
+            })
 
-hotspots.sort(key=lambda x: x["score"], reverse=True)
+        # --- MODEL 2: REAL (Fixed Reference Values) ---
+        score_real, matched_real = compute_real_hsi(point, REF_VALUES, TOLERANCES, REAL_WEIGHTS)
+        if score_real >= HSI_THRESHOLD:
+            real_hotspots.append({
+                "lat": lat, "lon": lon,
+                "score": round(score_real * 100, 1),
+                "color": "#ffaa00",
+                "name": "Reference Match",
+                "depth": round(ref_depth, 1),
+                "species": [{
+                    "id": "real_ref",
+                    "name": "Real Catch Similarity",
+                    "color": "#ffaa00",
+                    "score": round(score_real * 100, 1),
+                    "vars": matched_real,
+                }],
+                "data": {
+                    "temp": round(point["temperature"], 2),
+                    "chl": round(point["chlorophyll"], 3) if point["chlorophyll"] else None,
+                    "o2": round(point["oxygen"], 2) if point["oxygen"] else None,
+                    "sal": round(point["salinity"], 2) if point["salinity"] else None,
+                    "secchi": round(point["transparency"], 1) if point["transparency"] else None,
+                    "current": round(point["currentSpeed"], 2) if point["currentSpeed"] else None,
+                    "thermo": round(point["thermocline"], 1) if point["thermocline"] else None,
+                    "bathy": round(b, 0) if b else None,
+                }
+            })
+
 print(f"Total sea points : {total_pts:,}")
-print(f"Hotspots (>=60%) : {passed_pts:,}")
+print(f"Literature hotspots (>=60%) : {len(lit_hotspots):,}")
+print(f"Real hotspots (>=60%) : {len(real_hotspots):,}")
 
-output = {"timestamp": yesterday, "count": len(hotspots), "hotspots": hotspots}
+# =====================================================
+# SAVE OUTPUT
+# =====================================================
+output = {
+    "timestamp": yesterday,
+    "reference_point": {
+        "lat": REF_LAT,
+        "lon": REF_LON,
+        "values": {k: round(v, 2) if v is not None else None for k, v in REF_VALUES.items()}
+    },
+    "tolerances": {k: round(v, 2) for k, v in TOLERANCES.items()},
+    "literature": lit_hotspots,
+    "real": real_hotspots,
+    "count_lit": len(lit_hotspots),
+    "count_real": len(real_hotspots),
+}
+
 with open("hotspots.json", "w", encoding="utf-8") as f:
-    json.dump(output, f, separators=(',',':'), ensure_ascii=False)
+    json.dump(output, f, separators=(',', ':'), ensure_ascii=False)
 
 size_kb = os.path.getsize("hotspots.json") / 1024
-print(f"Saved hotspots.json — {len(hotspots):,} hotspots — {size_kb:.1f} KB")
+print(f"Saved hotspots.json — {size_kb:.1f} KB")
 print("Done.")
